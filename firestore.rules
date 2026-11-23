@@ -1,0 +1,377 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar 0: Default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        request.auth.token.email == 'teisco181@gmail.com'
+      );
+    }
+
+    function isValidAdminMarker(data, uid) {
+      return data.keys().hasAll(['uid', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'createdAt'])
+        && isValidId(data.uid)
+        && data.uid == uid
+        && data.createdAt is timestamp;
+    }
+
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll(['uid', 'displayName', 'role', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'displayName', 'role', 'createdAt', 'updatedAt'])
+        && isValidId(data.uid)
+        && data.uid == userId
+        && data.displayName is string
+        && data.displayName.size() >= 1
+        && data.displayName.size() <= 80
+        && data.role is string
+        && (data.role == 'player' || data.role == 'admin')
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidUnlockedCase(data, caseId) {
+      return data.keys().hasAll(['caseId', 'codeUsed', 'unlockedAt'])
+        && data.keys().hasOnly(['caseId', 'codeUsed', 'unlockedAt'])
+        && isValidId(data.caseId)
+        && data.caseId == caseId
+        && data.codeUsed is string
+        && data.codeUsed.size() >= 1
+        && data.codeUsed.size() <= 64
+        && data.unlockedAt is timestamp;
+    }
+
+    function isValidPlayerNote(data, caseId, userId) {
+      return data.keys().hasAll(['caseId', 'userId', 'generalNotes', 'suspectMarks', 'pinnedClues', 'customTraces', 'updatedAt'])
+        && data.keys().hasOnly(['caseId', 'userId', 'generalNotes', 'suspectMarks', 'pinnedClues', 'customTraces', 'updatedAt'])
+        && isValidId(data.caseId)
+        && data.caseId == caseId
+        && isValidId(data.userId)
+        && data.userId == userId
+        && data.generalNotes is string
+        && data.generalNotes.size() <= 20000
+        && data.suspectMarks is map
+        && data.suspectMarks.size() <= 100
+        && data.pinnedClues is list
+        && data.pinnedClues.size() <= 100
+        && (data.pinnedClues.size() == 0 || data.pinnedClues[0] is string)
+        && data.customTraces is list
+        && data.customTraces.size() <= 50
+        && (data.customTraces.size() == 0 || data.customTraces[0] is map)
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCasePayload(data, caseId) {
+      return data.keys().hasAll([
+          'id', 'ownerId', 'code', 'joinCode', 'title', 'townName', 'subtitle',
+          'status', 'briefing', 'printedDossierGuide', 'mapCols', 'mapRows',
+          'terrain', 'locations', 'persons', 'evidence', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'ownerId', 'code', 'joinCode', 'title', 'townName', 'subtitle',
+          'status', 'briefing', 'printedDossierGuide', 'mapCols', 'mapRows',
+          'terrain', 'locations', 'persons', 'evidence', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && data.id == caseId
+        && isValidId(data.ownerId)
+        && data.code is string && data.code.size() >= 1 && data.code.size() <= 64
+        && data.joinCode is string && data.joinCode.size() >= 1 && data.joinCode.size() <= 64
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 140
+        && data.townName is string && data.townName.size() >= 1 && data.townName.size() <= 100
+        && data.subtitle is string && data.subtitle.size() <= 200
+        && data.status is string && (data.status == 'draft' || data.status == 'published')
+        && data.briefing is string && data.briefing.size() <= 15000
+        && data.printedDossierGuide is string && data.printedDossierGuide.size() <= 5000
+        && data.mapCols is number && data.mapCols >= 8 && data.mapCols <= 48
+        && data.mapRows is number && data.mapRows >= 6 && data.mapRows <= 36
+        && data.terrain is list && data.terrain.size() >= 48 && data.terrain.size() <= 1728
+        && data.terrain[0] is string
+        && data.locations is list && data.locations.size() <= 100
+        && (data.locations.size() == 0 || data.locations[0] is map)
+        && data.persons is list && data.persons.size() <= 60
+        && (data.persons.size() == 0 || data.persons[0] is map)
+        && data.evidence is list && data.evidence.size() <= 100
+        && (data.evidence.size() == 0 || data.evidence[0] is map)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCaseCodeLookup(data) {
+      return data.keys().hasAll(['caseId', 'status', 'updatedAt'])
+        && data.keys().hasOnly(['caseId', 'status', 'updatedAt'])
+        && isValidId(data.caseId)
+        && data.status is string && (data.status == 'draft' || data.status == 'published')
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidMapTemplate(data, mapId) {
+      return data.keys().hasAll([
+          'id', 'ownerId', 'name', 'townName', 'mapCols', 'mapRows',
+          'terrain', 'locations', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'ownerId', 'name', 'townName', 'mapCols', 'mapRows',
+          'terrain', 'locations', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && data.id == mapId
+        && isValidId(data.ownerId)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 100
+        && data.townName is string && data.townName.size() >= 1 && data.townName.size() <= 100
+        && data.mapCols is number && data.mapCols >= 8 && data.mapCols <= 48
+        && data.mapRows is number && data.mapRows >= 6 && data.mapRows <= 36
+        && data.terrain is list && data.terrain.size() >= 48 && data.terrain.size() <= 1728
+        && data.terrain[0] is string
+        && data.locations is list && data.locations.size() <= 100
+        && (data.locations.size() == 0 || data.locations[0] is map)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCommunity(data, communityId) {
+      return data.keys().hasAll([
+          'id', 'ownerId', 'name', 'description', 'townName', 'mapCols', 'mapRows',
+          'terrain', 'locations', 'persons', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'ownerId', 'name', 'description', 'townName', 'mapCols', 'mapRows',
+          'terrain', 'locations', 'persons', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && data.id == communityId
+        && isValidId(data.ownerId)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 100
+        && data.description is string && data.description.size() <= 500
+        && data.townName is string && data.townName.size() >= 1 && data.townName.size() <= 100
+        && data.mapCols is number && data.mapCols >= 8 && data.mapCols <= 48
+        && data.mapRows is number && data.mapRows >= 6 && data.mapRows <= 36
+        && data.terrain is list && data.terrain.size() >= 48 && data.terrain.size() <= 1728
+        && data.terrain[0] is string
+        && data.locations is list && data.locations.size() <= 100
+        && (data.locations.size() == 0 || data.locations[0] is map)
+        && data.persons is list && data.persons.size() <= 60
+        && (data.persons.size() == 0 || data.persons[0] is map)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Admin markers
+    match /admins/{uid} {
+      allow get: if isValidId(uid) && (isOwner(uid) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isAdmin()
+        && isValidId(uid)
+        && isValidAdminMarker(incoming(), uid)
+        && incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isAdmin() && isValidId(uid);
+    }
+
+    // User profiles & scoped subcollections
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isSignedIn()
+        && isValidId(userId)
+        && isValidUserProfile(incoming(), userId)
+        && isOwner(userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (incoming().role == 'player' || isAdmin());
+      allow update: if isSignedIn()
+        && isValidId(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (
+            isOwner(userId)
+            && incoming().role == existing().role
+            && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'updatedAt'])
+          )
+        );
+      allow delete: if isAdmin() && isValidId(userId);
+
+      // Cases unlocked by this player
+      match /unlockedCases/{caseId} {
+        allow get: if isValidId(userId) && isValidId(caseId) && (isOwner(userId) || isAdmin());
+        allow list: if isValidId(userId) && (isOwner(userId) || isAdmin());
+        allow create: if isSignedIn()
+          && isValidId(userId)
+          && isValidId(caseId)
+          && isValidUnlockedCase(incoming(), caseId)
+          && (isOwner(userId) || isAdmin())
+          && incoming().unlockedAt == request.time
+          && exists(/databases/$(database)/documents/publishedCases/$(caseId));
+        allow update: if false;
+        allow delete: if isValidId(userId) && isValidId(caseId) && (isOwner(userId) || isAdmin());
+      }
+
+      // Personal detective notes per case
+      match /notes/{caseId} {
+        allow get: if isValidId(userId) && isValidId(caseId) && (isOwner(userId) || isAdmin());
+        allow list: if isValidId(userId) && (isOwner(userId) || isAdmin());
+        allow create: if isSignedIn()
+          && isValidId(userId)
+          && isValidId(caseId)
+          && isValidPlayerNote(incoming(), caseId, userId)
+          && isOwner(userId)
+          && incoming().updatedAt == request.time;
+        allow update: if isSignedIn()
+          && isValidId(userId)
+          && isValidId(caseId)
+          && isValidPlayerNote(incoming(), caseId, userId)
+          && isOwner(userId)
+          && incoming().caseId == existing().caseId
+          && incoming().userId == existing().userId
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'generalNotes', 'suspectMarks', 'pinnedClues', 'customTraces', 'updatedAt'
+          ]);
+        allow delete: if isValidId(userId) && isValidId(caseId) && (isOwner(userId) || isAdmin());
+      }
+    }
+
+    // Full cases (Admin / Maker only; contains isCulprit and creatorSecretNote)
+    match /cases/{caseId} {
+      allow get: if isValidId(caseId) && isAdmin();
+      allow list: if isAdmin();
+      allow create: if isAdmin()
+        && isValidId(caseId)
+        && isValidCasePayload(incoming(), caseId)
+        && incoming().ownerId == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin()
+        && isValidId(caseId)
+        && isValidCasePayload(incoming(), caseId)
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'code', 'joinCode', 'title', 'townName', 'subtitle', 'status',
+          'briefing', 'printedDossierGuide', 'mapCols', 'mapRows',
+          'terrain', 'locations', 'persons', 'evidence', 'updatedAt'
+        ]);
+      allow delete: if isAdmin() && isValidId(caseId);
+    }
+
+    // Sanitized published cases (Readable only if admin or unlocked by this player)
+    match /publishedCases/{caseId} {
+      allow get: if isValidId(caseId) && (
+        isAdmin() ||
+        (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)/unlockedCases/$(caseId)))
+      );
+      allow list: if isAdmin();
+      allow create: if isAdmin()
+        && isValidId(caseId)
+        && isValidCasePayload(incoming(), caseId)
+        && incoming().status == 'published'
+        && incoming().ownerId == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin()
+        && isValidId(caseId)
+        && isValidCasePayload(incoming(), caseId)
+        && incoming().status == 'published'
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'code', 'joinCode', 'title', 'townName', 'subtitle', 'status',
+          'briefing', 'printedDossierGuide', 'mapCols', 'mapRows',
+          'terrain', 'locations', 'persons', 'evidence', 'updatedAt'
+        ]);
+      allow delete: if isAdmin() && isValidId(caseId);
+    }
+
+    // Dossier access code lookup (get-only for players, no list enumeration)
+    match /caseCodes/{codeKey} {
+      allow get: if isValidId(codeKey) && isSignedIn();
+      allow list: if isAdmin();
+      allow create: if isAdmin()
+        && isValidId(codeKey)
+        && isValidCaseCodeLookup(incoming())
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin()
+        && isValidId(codeKey)
+        && isValidCaseCodeLookup(incoming())
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['caseId', 'status', 'updatedAt']);
+      allow delete: if isAdmin() && isValidId(codeKey);
+    }
+
+    // Reusable town maps (Admin only)
+    match /mapTemplates/{mapId} {
+      allow get: if isValidId(mapId) && isAdmin();
+      allow list: if isAdmin();
+      allow create: if isAdmin()
+        && isValidId(mapId)
+        && isValidMapTemplate(incoming(), mapId)
+        && incoming().ownerId == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin()
+        && isValidId(mapId)
+        && isValidMapTemplate(incoming(), mapId)
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'name', 'townName', 'mapCols', 'mapRows', 'terrain', 'locations', 'updatedAt'
+        ]);
+      allow delete: if isAdmin() && isValidId(mapId);
+    }
+
+    // Reusable communities: village map + locations + persons (Admin only)
+    match /communities/{communityId} {
+      allow get: if isValidId(communityId) && isAdmin();
+      allow list: if isAdmin();
+      allow create: if isAdmin()
+        && isValidId(communityId)
+        && isValidCommunity(incoming(), communityId)
+        && incoming().ownerId == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin()
+        && isValidId(communityId)
+        && isValidCommunity(incoming(), communityId)
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'name', 'description', 'townName', 'mapCols', 'mapRows',
+          'terrain', 'locations', 'persons', 'updatedAt'
+        ]);
+      allow delete: if isAdmin() && isValidId(communityId);
+    }
+  }
+}

@@ -1,17 +1,16 @@
 import React, { useState } from 'react';
 import { FolderPlus, KeyRound } from 'lucide-react';
-import { api } from '../api.ts';
 import type { CaseFile } from '../types.ts';
 
 interface PlayerCodeGateProps {
-  token: string;
   username: string;
+  onRedeemCode: (code: string) => Promise<CaseFile>;
   onUnlocked: (caseFile: CaseFile) => void;
 }
 
 export const PlayerCodeGate: React.FC<PlayerCodeGateProps> = ({
-  token,
   username,
+  onRedeemCode,
   onUnlocked,
 }) => {
   const [code, setCode] = useState('');
@@ -28,8 +27,8 @@ export const PlayerCodeGate: React.FC<PlayerCodeGateProps> = ({
     }
     setLoading(true);
     try {
-      const res = await api.redeemCaseCode(token, trimmed);
-      onUnlocked(res.caseFile);
+      const unlocked = await onRedeemCode(trimmed);
+      onUnlocked(unlocked);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : 'Code kon niet worden geverifieerd.'
@@ -99,8 +98,8 @@ export const PlayerCodeGate: React.FC<PlayerCodeGateProps> = ({
         </form>
 
         <p className="text-[11px] text-slate-500 dark:text-slate-400 border-t border-slate-200 dark:border-slate-800 pt-4 leading-relaxed">
-          Na het toevoegen blijft het dossier gekoppeld aan uw account zodat u bij een
-          volgend bezoek direct verder kunt spelen.
+          Na het toevoegen blijft het dossier gekoppeld aan uw Google-account zodat u
+          op elk apparaat verder kunt spelen.
         </p>
       </div>
     </div>

@@ -161,3 +161,18 @@ export interface MapTemplate {
   updatedAt: string;
 }
 
+export interface CommunityTemplate {
+  id: string;
+  name: string;
+  description: string;
+  townName: string;
+  mapCols: number;
+  mapRows: number;
+  terrain: TerrainType[];
+  locations: MapLocation[];
+  persons: Person[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+

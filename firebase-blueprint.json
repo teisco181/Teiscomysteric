@@ -1,0 +1,506 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated detective or case maker profile without PII.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin", "player"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "displayName", "role", "createdAt", "updatedAt"]
+    },
+    "UnlockedCaseLink": {
+      "title": "UnlockedCaseLink",
+      "description": "Tracks which published mystery cases a player has unlocked via dossier code.",
+      "type": "object",
+      "properties": {
+        "caseId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "codeUsed": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "unlockedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["caseId", "codeUsed", "unlockedAt"]
+    },
+    "PlayerNote": {
+      "title": "PlayerNote",
+      "description": "Personal detective investigation notes, suspect marks, pinned clues, and custom pixel traces for a specific case.",
+      "type": "object",
+      "properties": {
+        "caseId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "generalNotes": {
+          "type": "string",
+          "maxLength": 20000
+        },
+        "suspectMarks": {
+          "type": "object"
+        },
+        "pinnedClues": {
+          "type": "array"
+        },
+        "customTraces": {
+          "type": "array"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["caseId", "userId", "generalNotes", "suspectMarks", "pinnedClues", "customTraces", "updatedAt"]
+    },
+    "CaseFile": {
+      "title": "CaseFile",
+      "description": "Full mystery dossier including map terrain, locations, suspects with pixel fingerprints, evidence stamps, and creator-only notes.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "joinCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 140
+        },
+        "townName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "subtitle": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "status": {
+          "type": "string",
+          "enum": ["draft", "published"]
+        },
+        "briefing": {
+          "type": "string",
+          "maxLength": 15000
+        },
+        "printedDossierGuide": {
+          "type": "string",
+          "maxLength": 5000
+        },
+        "mapCols": {
+          "type": "number"
+        },
+        "mapRows": {
+          "type": "number"
+        },
+        "terrain": {
+          "type": "array"
+        },
+        "locations": {
+          "type": "array"
+        },
+        "persons": {
+          "type": "array"
+        },
+        "evidence": {
+          "type": "array"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "code",
+        "joinCode",
+        "title",
+        "townName",
+        "subtitle",
+        "status",
+        "briefing",
+        "printedDossierGuide",
+        "mapCols",
+        "mapRows",
+        "terrain",
+        "locations",
+        "persons",
+        "evidence",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "PublishedCase": {
+      "title": "PublishedCase",
+      "description": "Sanitized published mystery dossier readable by players who unlocked the case code.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "joinCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 140
+        },
+        "townName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "subtitle": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "status": {
+          "type": "string",
+          "enum": ["published"]
+        },
+        "briefing": {
+          "type": "string",
+          "maxLength": 15000
+        },
+        "printedDossierGuide": {
+          "type": "string",
+          "maxLength": 5000
+        },
+        "mapCols": {
+          "type": "number"
+        },
+        "mapRows": {
+          "type": "number"
+        },
+        "terrain": {
+          "type": "array"
+        },
+        "locations": {
+          "type": "array"
+        },
+        "persons": {
+          "type": "array"
+        },
+        "evidence": {
+          "type": "array"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "code",
+        "joinCode",
+        "title",
+        "townName",
+        "subtitle",
+        "status",
+        "briefing",
+        "printedDossierGuide",
+        "mapCols",
+        "mapRows",
+        "terrain",
+        "locations",
+        "persons",
+        "evidence",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CaseCodeLookup": {
+      "title": "CaseCodeLookup",
+      "description": "Maps a normalized dossier access code to its caseId and publication status for code redemption.",
+      "type": "object",
+      "properties": {
+        "caseId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["draft", "published"]
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["caseId", "status", "updatedAt"]
+    },
+    "MapTemplate": {
+      "title": "MapTemplate",
+      "description": "Reusable town/village map template saved by the case maker.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "townName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "mapCols": {
+          "type": "number"
+        },
+        "mapRows": {
+          "type": "number"
+        },
+        "terrain": {
+          "type": "array"
+        },
+        "locations": {
+          "type": "array"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "name",
+        "townName",
+        "mapCols",
+        "mapRows",
+        "terrain",
+        "locations",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CommunityTemplate": {
+      "title": "CommunityTemplate",
+      "description": "Reusable community combining a village map, locations, and inhabitants (with fingerprints) for reuse across different case files.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "townName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "mapCols": {
+          "type": "number"
+        },
+        "mapRows": {
+          "type": "number"
+        },
+        "terrain": {
+          "type": "array"
+        },
+        "locations": {
+          "type": "array"
+        },
+        "persons": {
+          "type": "array"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "name",
+        "description",
+        "townName",
+        "mapCols",
+        "mapRows",
+        "terrain",
+        "locations",
+        "persons",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AdminMarker": {
+      "title": "AdminMarker",
+      "description": "Marker document granting admin privileges to a specific UID.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/admins/{uid}": {
+      "schema": { "$ref": "#/entities/AdminMarker" },
+      "description": "Admin role marker documents."
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User profiles restricted to owner or admin."
+    },
+    "/users/{userId}/unlockedCases/{caseId}": {
+      "schema": { "$ref": "#/entities/UnlockedCaseLink" },
+      "description": "Published cases unlocked by a specific player using a valid dossier code."
+    },
+    "/users/{userId}/notes/{caseId}": {
+      "schema": { "$ref": "#/entities/PlayerNote" },
+      "description": "Private investigation notes per player per case."
+    },
+    "/cases/{caseId}": {
+      "schema": { "$ref": "#/entities/CaseFile" },
+      "description": "Full case files (maker-only, includes secret notes and culprit flags)."
+    },
+    "/publishedCases/{caseId}": {
+      "schema": { "$ref": "#/entities/PublishedCase" },
+      "description": "Sanitized published case data readable by players who unlocked the case."
+    },
+    "/caseCodes/{codeKey}": {
+      "schema": { "$ref": "#/entities/CaseCodeLookup" },
+      "description": "Dossier code lookup documents (get-only for signed-in players, no list scraping)."
+    },
+    "/mapTemplates/{mapId}": {
+      "schema": { "$ref": "#/entities/MapTemplate" },
+      "description": "Reusable town maps managed exclusively by admins."
+    },
+    "/communities/{communityId}": {
+      "schema": { "$ref": "#/entities/CommunityTemplate" },
+      "description": "Reusable communities (town map + locations + persons) managed exclusively by admins."
+    }
+  }
+}

@@ -1,17 +1,39 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { onAuthStateChanged } from 'firebase/auth';
 import { LogOut, Moon, RefreshCw, Shield, Sun, User } from 'lucide-react';
-import { api } from './api.ts';
 import { AuthPortal } from './components/AuthPortal.tsx';
 import { MakerStudio, type MakerTab } from './components/MakerStudio.tsx';
 import { PlayerCodeGate } from './components/PlayerCodeGate.tsx';
 import { PlayerPortal, type PlayerTab } from './components/PlayerPortal.tsx';
 import { PrintableDossierModal } from './components/PrintableDossierModal.tsx';
-import type {
-  AuthStatus,
-  AuthUser,
-  CaseFile,
-  MapTemplate,
-  PlayerNote,
+import { auth } from './firebase.ts';
+import {
+  deleteCaseFromFirestore,
+  deleteCommunityFromFirestore,
+  deleteMapTemplateFromFirestore,
+  ensureStarterSeedData,
+  ensureUserProfile,
+  getPlayerNoteFromFirestore,
+  redeemCaseCodeInFirestore,
+  saveCaseToFirestore,
+  saveCommunityToFirestore,
+  saveMapTemplateToFirestore,
+  savePlayerNoteToFirestore,
+  signOutAccount,
+  subscribeCases,
+  subscribeCommunities,
+  subscribeMapTemplates,
+} from './firebaseStore.ts';
+import {
+  MAP_COLS,
+  MAP_ROWS,
+  type AuthUser,
+  type CaseFile,
+  type CommunityTemplate,
+  type MapTemplate,
+  type Person,
+  type PlayerNote,
+  type TerrainType,
 } from './types.ts';
 
 const EMPTY_NOTE = (caseId: string, userId: string): PlayerNote => ({
@@ -24,14 +46,26 @@ const EMPTY_NOTE = (caseId: string, userId: string): PlayerNote => ({
   updatedAt: new Date().toISOString(),
 });
 
+function clonePersons(persons: Person[], resetSecrets = false): Person[] {
+  return persons.map((p) => ({
+    ...p,
+    fingerprint: Array.isArray(p.fingerprint) ? [...p.fingerprint] : [],
+    isCulprit: resetSecrets ? false : p.isCulprit,
+    creatorSecretNote: resetSecrets ? '' : p.creatorSecretNote,
+  }));
+}
+
+function generateNextCaseCode(existingCases: CaseFile[]): string {
+  const num = existingCases.length + 48;
+  return `ZAAK-${String(num).padStart(3, '0')}`;
+}
+
 export default function App() {
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
-  const [authStatus, setAuthStatus] = useState<AuthStatus>({
-    adminClaimed: false,
-    hasEnvAdminPasscode: false,
-  });
+  const [authReady, setAuthReady] = useState(false);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
-  const [token, setToken] = useState<string | null>(null);
 
   // Admin can preview as player without logging out
   const [viewMode, setViewMode] = useState<'maker' | 'player'>('player');
@@ -40,6 +74,7 @@ export default function App() {
 
   const [cases, setCases] = useState<CaseFile[]>([]);
   const [mapTemplates, setMapTemplates] = useState<MapTemplate[]>([]);
+  const [communities, setCommunities] = useState<CommunityTemplate[]>([]);
   const [activeCaseId, setActiveCaseId] = useState<string>('');
   const [draftCase, setDraftCase] = useState<CaseFile | null>(null);
   const [isDirty, setIsDirty] = useState(false);
@@ -52,6 +87,7 @@ export default function App() {
 
   const [loadingData, setLoadingData] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadNonce, setReloadNonce] = useState(0);
   const [showPrintModal, setShowPrintModal] = useState(false);
 
   const latestDraftRef = useRef<CaseFile | null>(null);
@@ -90,72 +126,155 @@ export default function App() {
     setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
   };
 
+  // Observe Firebase Auth state
   useEffect(() => {
-    api
-      .getAuthStatus()
-      .then(setAuthStatus)
-      .catch(() => {
-        // Ignore transient status fetch failure
-      });
-  }, []);
-
-  const loadCases = useCallback(async (authToken: string, preferredId?: string) => {
-    setLoadingData(true);
-    setLoadError(null);
-    try {
-      const res = await api.listCases(authToken);
-      setCases(res.cases);
-      const target =
-        res.cases.find((c) => c.id === preferredId) ?? res.cases[0] ?? null;
-      if (target) {
-        setActiveCaseId(target.id);
-        setDraftCase(target);
-        setIsDirty(false);
-      } else {
+    const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
+      if (!fbUser) {
+        setAuthUser(null);
+        setCases([]);
+        setMapTemplates([]);
+        setCommunities([]);
         setActiveCaseId('');
         setDraftCase(null);
+        setNote(null);
+        setIsDirty(false);
+        setLoadError(null);
+        setAuthLoading(false);
+        setAuthReady(true);
+        return;
       }
-    } catch (err) {
-      setLoadError(
-        err instanceof Error ? err.message : 'Kon dossiers niet laden.'
-      );
-    } finally {
-      setLoadingData(false);
-    }
+
+      setAuthLoading(true);
+      setAuthError(null);
+      try {
+        const profile = await ensureUserProfile(fbUser);
+        setAuthUser(profile);
+        setViewMode(profile.role === 'admin' ? 'maker' : 'player');
+      } catch (err) {
+        setAuthError(
+          err instanceof Error
+            ? err.message
+            : 'Gebruikersprofiel kon niet worden geladen uit Firestore.'
+        );
+        setAuthUser(null);
+      } finally {
+        setAuthLoading(false);
+        setAuthReady(true);
+      }
+    });
+
+    return () => unsubscribe();
   }, []);
 
-  const handleAuthenticated = async (user: AuthUser, nextToken: string) => {
-    setAuthUser(user);
-    setToken(nextToken);
-    setViewMode(user.role === 'admin' ? 'maker' : 'player');
-    await loadCases(nextToken);
-    if (user.role === 'admin') {
-      api
-        .listMaps(nextToken)
-        .then((res) => setMapTemplates(res.maps))
-        .catch(() => {});
-    }
-  };
+  // Subscribe to Firestore collections after auth is ready
+  useEffect(() => {
+    if (!authReady || !authUser) return;
 
-  const handleLogout = () => {
-    setAuthUser(null);
-    setToken(null);
-    setCases([]);
-    setMapTemplates([]);
-    setDraftCase(null);
-    setNote(null);
-    setIsDirty(false);
-    api.getAuthStatus().then(setAuthStatus).catch(() => {});
+    let cancelled = false;
+    let unsubCases: (() => void) | null = null;
+    let unsubMaps: (() => void) | null = null;
+    let unsubCommunities: (() => void) | null = null;
+
+    const startSubscriptions = async () => {
+      setLoadingData(true);
+      setLoadError(null);
+
+      try {
+        if (authUser.role === 'admin') {
+          await ensureStarterSeedData(authUser.id);
+        }
+        if (cancelled) return;
+
+        unsubCases = subscribeCases(
+          authUser,
+          (list) => {
+            if (cancelled) return;
+            setCases(list);
+            setLoadingData(false);
+
+            const currentId = activeCaseIdRef.current;
+            const currentMatch = list.find((c) => c.id === currentId);
+            if (!currentMatch) {
+              const first = list[0] ?? null;
+              draftVersionRef.current += 1;
+              setActiveCaseId(first?.id ?? '');
+              setDraftCase(first);
+              latestDraftRef.current = first;
+              setIsDirty(false);
+              isDirtyRef.current = false;
+            } else if (!isDirtyRef.current && !isSavingRef.current) {
+              setDraftCase(currentMatch);
+              latestDraftRef.current = currentMatch;
+            }
+          },
+          (err) => {
+            if (cancelled) return;
+            setLoadError(err.message || 'Kon dossiers niet laden.');
+            setLoadingData(false);
+          }
+        );
+
+        if (authUser.role === 'admin') {
+          unsubMaps = subscribeMapTemplates(
+            (maps) => {
+              if (!cancelled) setMapTemplates(maps);
+            },
+            (err) => {
+              if (!cancelled) {
+                setLoadError((prev) => prev ?? err.message);
+              }
+            }
+          );
+
+          unsubCommunities = subscribeCommunities(
+            (comms) => {
+              if (!cancelled) setCommunities(comms);
+            },
+            (err) => {
+              if (!cancelled) {
+                setLoadError((prev) => prev ?? err.message);
+              }
+            }
+          );
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setLoadError(
+            err instanceof Error ? err.message : 'Verbinding met Firestore mislukt.'
+          );
+          setLoadingData(false);
+        }
+      }
+    };
+
+    void startSubscriptions();
+
+    return () => {
+      cancelled = true;
+      unsubCases?.();
+      unsubMaps?.();
+      unsubCommunities?.();
+    };
+  }, [authReady, authUser, reloadNonce]);
+
+  const handleLogout = async () => {
+    try {
+      await signOutAccount();
+    } catch {
+      // Ignore transient signOut errors
+    }
   };
 
   // Load player notes whenever active case changes
   useEffect(() => {
-    if (!token || !authUser || !activeCaseId) return;
+    if (!authUser || !activeCaseId) {
+      setNote(null);
+      return;
+    }
     let cancelled = false;
-    api
-      .getNotes(token, activeCaseId)
-      .then((res) => {
-        if (!cancelled) setNote(res.note);
+    getPlayerNoteFromFirestore(authUser.id, activeCaseId)
+      .then((loaded) => {
+        if (!cancelled) setNote(loaded);
       })
       .catch(() => {
         if (!cancelled) setNote(EMPTY_NOTE(activeCaseId, authUser.id));
@@ -163,15 +282,18 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [token, authUser, activeCaseId]);
+  }, [authUser, activeCaseId]);
 
   const handleSelectCase = (caseId: string) => {
     const found = cases.find((c) => c.id === caseId);
     if (!found) return;
     draftVersionRef.current += 1;
     setActiveCaseId(found.id);
+    activeCaseIdRef.current = found.id;
     setDraftCase(found);
+    latestDraftRef.current = found;
     setIsDirty(false);
+    isDirtyRef.current = false;
     setSaveMessage(null);
     setNoteSaveMessage(null);
   };
@@ -188,7 +310,7 @@ export default function App() {
   const handleSaveCase = useCallback(
     async (overrideCase?: CaseFile, options?: { auto?: boolean }) => {
       const target = overrideCase ?? latestDraftRef.current;
-      if (!token || !target || isSavingRef.current) return;
+      if (!authUser || !target || isSavingRef.current) return;
       const versionAtStart = draftVersionRef.current;
       const targetId = target.id;
 
@@ -198,17 +320,15 @@ export default function App() {
         setSaveMessage(null);
       }
       try {
-        const res = await api.updateCase(token, target.id, target);
-        setCases((prev) =>
-          prev.map((c) => (c.id === res.caseFile.id ? res.caseFile : c))
-        );
+        const saved = await saveCaseToFirestore(target, authUser.id, false);
+        setCases((prev) => prev.map((c) => (c.id === saved.id ? saved : c)));
         // Only overwrite draftCase if the user did not edit or switch cases while saving
         if (
           draftVersionRef.current === versionAtStart &&
           activeCaseIdRef.current === targetId
         ) {
-          setDraftCase(res.caseFile);
-          latestDraftRef.current = res.caseFile;
+          setDraftCase(saved);
+          latestDraftRef.current = saved;
           setIsDirty(false);
           isDirtyRef.current = false;
         }
@@ -225,12 +345,12 @@ export default function App() {
         setIsSavingCase(false);
       }
     },
-    [token]
+    [authUser]
   );
 
   // Auto-save active dossier every 5 seconds while editing in Maker mode
   useEffect(() => {
-    if (!token || authUser?.role !== 'admin' || viewMode !== 'maker') return;
+    if (!authUser || authUser.role !== 'admin' || viewMode !== 'maker') return;
     const intervalId = window.setInterval(() => {
       if (!isDirtyRef.current || isSavingRef.current) return;
       const current = latestDraftRef.current;
@@ -238,68 +358,121 @@ export default function App() {
       void handleSaveCase(current, { auto: true });
     }, 5000);
     return () => window.clearInterval(intervalId);
-  }, [token, authUser?.role, viewMode, handleSaveCase]);
+  }, [authUser, viewMode, handleSaveCase]);
 
   const handleCreateCase = async () => {
-    if (!token) return;
+    if (!authUser) return;
     setIsSavingCase(true);
     try {
+      const firstCommunity = communities[0];
       const firstMap = mapTemplates[0];
-      const res = await api.createCase(token, {
+      const cols = firstCommunity?.mapCols ?? firstMap?.mapCols ?? MAP_COLS;
+      const rows = firstCommunity?.mapRows ?? firstMap?.mapRows ?? MAP_ROWS;
+      const terrain: TerrainType[] = firstCommunity
+        ? [...firstCommunity.terrain]
+        : firstMap
+          ? [...firstMap.terrain]
+          : new Array<TerrainType>(cols * rows).fill('grass');
+      const locations = firstCommunity
+        ? firstCommunity.locations.map((l) => ({ ...l }))
+        : firstMap
+          ? firstMap.locations.map((l) => ({ ...l }))
+          : [];
+      const persons = firstCommunity
+        ? clonePersons(firstCommunity.persons, true)
+        : [];
+
+      const code = generateNextCaseCode(cases);
+      const now = new Date().toISOString();
+      const newCase: CaseFile = {
+        id: `case-${Date.now().toString(36)}`,
+        code,
+        joinCode: code,
         title: `Nieuw Mysterie ${cases.length + 1}`,
-        townName: firstMap?.townName ?? 'Nieuw Dorp',
+        townName: firstCommunity?.townName ?? firstMap?.townName ?? 'Nieuw Dorp',
         subtitle: 'Onopgeloste zaak',
         status: 'published',
-        mapCols: firstMap?.mapCols ?? 24,
-        mapRows: firstMap?.mapRows ?? 14,
-        terrain: firstMap ? [...firstMap.terrain] : undefined,
-        locations: firstMap ? firstMap.locations.map((l) => ({ ...l })) : [],
-      });
-      setCases((prev) => [...prev, res.caseFile]);
-      setActiveCaseId(res.caseFile.id);
-      setDraftCase(res.caseFile);
+        briefing: 'Beschrijf hier de aanleiding en eerste melding voor de rechercheurs.',
+        printedDossierGuide:
+          'Gebruik de spoorcodes op uw papieren dossier in de Vingerafdruk Vergelijker.',
+        mapCols: cols,
+        mapRows: rows,
+        terrain,
+        locations,
+        persons,
+        evidence: [],
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      const saved = await saveCaseToFirestore(newCase, authUser.id, true);
+      draftVersionRef.current += 1;
+      setCases((prev) =>
+        prev.some((c) => c.id === saved.id) ? prev : [...prev, saved]
+      );
+      setActiveCaseId(saved.id);
+      activeCaseIdRef.current = saved.id;
+      setDraftCase(saved);
+      latestDraftRef.current = saved;
       setIsDirty(false);
+      isDirtyRef.current = false;
       setMakerTab('dossier');
+      setSaveMessage('Nieuw dossier aangemaakt');
+      setTimeout(() => setSaveMessage(null), 3000);
+    } catch (err) {
+      setSaveMessage(
+        err instanceof Error ? err.message : 'Aanmaken van dossier mislukt.'
+      );
     } finally {
       setIsSavingCase(false);
     }
   };
 
   const handleDeleteCase = async (caseId: string) => {
-    if (!token) return;
-    await api.deleteCase(token, caseId);
+    if (!authUser) return;
+    await deleteCaseFromFirestore(caseId);
     const remaining = cases.filter((c) => c.id !== caseId);
     setCases(remaining);
     const next = remaining[0] ?? null;
+    draftVersionRef.current += 1;
     setActiveCaseId(next?.id ?? '');
+    activeCaseIdRef.current = next?.id ?? '';
     setDraftCase(next);
+    latestDraftRef.current = next;
     setIsDirty(false);
+    isDirtyRef.current = false;
   };
 
+  // Map template handlers
   const handleSaveNewMapTemplate = async (name: string) => {
-    if (!token || !draftCase) return;
-    const res = await api.createMap(token, {
-      name,
-      townName: draftCase.townName,
-      mapCols: draftCase.mapCols,
-      mapRows: draftCase.mapRows,
-      terrain: [...draftCase.terrain],
-      locations: draftCase.locations.map((l) => ({ ...l })),
-    });
-    setMapTemplates((prev) => [...prev, res.mapTemplate]);
+    if (!authUser || !draftCase) return;
+    await saveMapTemplateToFirestore(
+      {
+        name,
+        townName: draftCase.townName,
+        mapCols: draftCase.mapCols,
+        mapRows: draftCase.mapRows,
+        terrain: [...draftCase.terrain],
+        locations: draftCase.locations.map((l) => ({ ...l })),
+      },
+      authUser.id
+    );
   };
 
   const handleUpdateMapTemplate = async (mapId: string) => {
-    if (!token || !draftCase) return;
-    const res = await api.updateMap(token, mapId, {
-      townName: draftCase.townName,
-      mapCols: draftCase.mapCols,
-      mapRows: draftCase.mapRows,
-      terrain: [...draftCase.terrain],
-      locations: draftCase.locations.map((l) => ({ ...l })),
-    });
-    setMapTemplates((prev) =>
-      prev.map((m) => (m.id === res.mapTemplate.id ? res.mapTemplate : m))
+    if (!authUser || !draftCase) return;
+    const existing = mapTemplates.find((m) => m.id === mapId);
+    await saveMapTemplateToFirestore(
+      {
+        id: mapId,
+        name: existing?.name ?? draftCase.townName,
+        townName: draftCase.townName,
+        mapCols: draftCase.mapCols,
+        mapRows: draftCase.mapRows,
+        terrain: [...draftCase.terrain],
+        locations: draftCase.locations.map((l) => ({ ...l })),
+      },
+      authUser.id
     );
   };
 
@@ -316,20 +489,129 @@ export default function App() {
   };
 
   const handleDeleteMapTemplate = async (mapId: string) => {
-    if (!token) return;
-    await api.deleteMap(token, mapId);
-    setMapTemplates((prev) => prev.filter((m) => m.id !== mapId));
+    await deleteMapTemplateFromFirestore(mapId);
   };
 
+  // Community handlers (reusable map + persons across multiple cases)
+  const handleSaveNewCommunity = async (name: string, description: string) => {
+    if (!authUser || !draftCase) return;
+    await saveCommunityToFirestore(
+      {
+        name,
+        description,
+        townName: draftCase.townName,
+        mapCols: draftCase.mapCols,
+        mapRows: draftCase.mapRows,
+        terrain: [...draftCase.terrain],
+        locations: draftCase.locations.map((l) => ({ ...l })),
+        persons: clonePersons(draftCase.persons, false),
+      },
+      authUser.id
+    );
+  };
+
+  const handleUpdateCommunity = async (communityId: string) => {
+    if (!authUser || !draftCase) return;
+    const existing = communities.find((c) => c.id === communityId);
+    await saveCommunityToFirestore(
+      {
+        id: communityId,
+        name: existing?.name ?? draftCase.townName,
+        description: existing?.description ?? '',
+        townName: draftCase.townName,
+        mapCols: draftCase.mapCols,
+        mapRows: draftCase.mapRows,
+        terrain: [...draftCase.terrain],
+        locations: draftCase.locations.map((l) => ({ ...l })),
+        persons: clonePersons(draftCase.persons, false),
+      },
+      authUser.id
+    );
+  };
+
+  const handleApplyCommunity = (community: CommunityTemplate) => {
+    if (!draftCase) return;
+    handleUpdateDraft({
+      ...draftCase,
+      townName: community.townName,
+      mapCols: community.mapCols,
+      mapRows: community.mapRows,
+      terrain: [...community.terrain],
+      locations: community.locations.map((l) => ({ ...l })),
+      persons: clonePersons(community.persons, false),
+    });
+  };
+
+  const handleCreateCaseFromCommunity = async (community: CommunityTemplate) => {
+    if (!authUser) return;
+    setIsSavingCase(true);
+    try {
+      const code = generateNextCaseCode(cases);
+      const now = new Date().toISOString();
+      const newCase: CaseFile = {
+        id: `case-${Date.now().toString(36)}`,
+        code,
+        joinCode: code,
+        title: `Nieuwe zaak in ${community.townName}`,
+        townName: community.townName,
+        subtitle: `Community: ${community.name}`,
+        status: 'published',
+        briefing:
+          community.description ||
+          `Nieuw mysterie in ${community.townName}. De bekende bewoners en locaties staan al klaar.`,
+        printedDossierGuide:
+          'Vergelijk spoorcodes uit het papieren dossier met de vingerafdrukdatabank.',
+        mapCols: community.mapCols,
+        mapRows: community.mapRows,
+        terrain: [...community.terrain],
+        locations: community.locations.map((l) => ({ ...l })),
+        persons: clonePersons(community.persons, true),
+        evidence: [],
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      const saved = await saveCaseToFirestore(newCase, authUser.id, true);
+      draftVersionRef.current += 1;
+      setCases((prev) =>
+        prev.some((c) => c.id === saved.id) ? prev : [...prev, saved]
+      );
+      setActiveCaseId(saved.id);
+      activeCaseIdRef.current = saved.id;
+      setDraftCase(saved);
+      latestDraftRef.current = saved;
+      setIsDirty(false);
+      isDirtyRef.current = false;
+      setMakerTab('dossier');
+      setSaveMessage(`Nieuw dossier gestart vanuit "${community.name}"`);
+      setTimeout(() => setSaveMessage(null), 3500);
+    } catch (err) {
+      setSaveMessage(
+        err instanceof Error ? err.message : 'Aanmaken vanuit community mislukt.'
+      );
+    } finally {
+      setIsSavingCase(false);
+    }
+  };
+
+  const handleDeleteCommunity = async (communityId: string) => {
+    await deleteCommunityFromFirestore(communityId);
+  };
+
+  // Player handlers
   const handleSaveNote = async () => {
-    if (!token || !activeCaseId || !note) return;
+    if (!authUser || !activeCaseId || !note) return;
     setIsSavingNote(true);
     setNoteSaveMessage(null);
     try {
-      const res = await api.saveNotes(token, activeCaseId, note);
-      setNote(res.note);
+      const saved = await savePlayerNoteToFirestore(authUser.id, activeCaseId, note);
+      setNote(saved);
       setNoteSaveMessage('Aantekeningen opgeslagen');
       setTimeout(() => setNoteSaveMessage(null), 3000);
+    } catch (err) {
+      setNoteSaveMessage(
+        err instanceof Error ? err.message : 'Opslaan van aantekeningen mislukt.'
+      );
     } finally {
       setIsSavingNote(false);
     }
@@ -338,18 +620,27 @@ export default function App() {
   const handleUnlockedCase = (unlocked: CaseFile) => {
     setCases((prev) => {
       const exists = prev.some((c) => c.id === unlocked.id);
-      return exists ? prev.map((c) => (c.id === unlocked.id ? unlocked : c)) : [...prev, unlocked];
+      return exists
+        ? prev.map((c) => (c.id === unlocked.id ? unlocked : c))
+        : [...prev, unlocked];
     });
+    draftVersionRef.current += 1;
     setActiveCaseId(unlocked.id);
+    activeCaseIdRef.current = unlocked.id;
     setDraftCase(unlocked);
+    latestDraftRef.current = unlocked;
     setIsDirty(false);
+    isDirtyRef.current = false;
     setPlayerTab('overzicht');
   };
 
-  const handleRedeemCode = async (code: string) => {
-    if (!token) return;
-    const res = await api.redeemCaseCode(token, code);
-    handleUnlockedCase(res.caseFile);
+  const handleRedeemCode = async (code: string): Promise<CaseFile> => {
+    if (!authUser) {
+      throw new Error('Log eerst in om een dossiercode in te voeren.');
+    }
+    const unlocked = await redeemCaseCodeInFirestore(authUser, code);
+    handleUnlockedCase(unlocked);
+    return unlocked;
   };
 
   const navItems = useMemo(() => {
@@ -382,13 +673,13 @@ export default function App() {
     }
   };
 
-  if (!authUser || !token) {
+  if (!authReady || !authUser) {
     return (
       <AuthPortal
-        authStatus={authStatus}
         theme={theme}
         onToggleTheme={toggleTheme}
-        onAuthenticated={handleAuthenticated}
+        authLoading={authLoading}
+        externalError={authError}
       />
     );
   }
@@ -535,7 +826,7 @@ export default function App() {
             <p className="text-sm text-rose-700 dark:text-rose-300">{loadError}</p>
             <button
               type="button"
-              onClick={() => loadCases(token, activeCaseId)}
+              onClick={() => setReloadNonce((n) => n + 1)}
               className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg bg-emerald-600 text-white"
             >
               <RefreshCw className="w-3.5 h-3.5" />
@@ -544,17 +835,17 @@ export default function App() {
           </div>
         ) : !draftCase && authUser.role === 'player' ? (
           <PlayerCodeGate
-            token={token}
             username={authUser.username}
+            onRedeemCode={handleRedeemCode}
             onUnlocked={handleUnlockedCase}
           />
         ) : !draftCase ? (
           <div className="p-12 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0F151D] text-center space-y-3">
             <h2 className="text-lg font-bold text-slate-900 dark:text-white">
-              Geen gepubliceerde dossiers beschikbaar
+              Geen dossiers beschikbaar
             </h2>
             <p className="text-sm text-slate-500 dark:text-slate-400">
-              Maak een nieuw dossier aan in de Bouwer Versie of publiceer een bestaand dossier.
+              Maak een nieuw dossier aan in de Bouwer Versie of start vanuit een Community.
             </p>
             <button
               type="button"
@@ -589,6 +880,12 @@ export default function App() {
             onUpdateMapTemplate={handleUpdateMapTemplate}
             onApplyMapTemplate={handleApplyMapTemplate}
             onDeleteMapTemplate={handleDeleteMapTemplate}
+            communities={communities}
+            onSaveNewCommunity={handleSaveNewCommunity}
+            onUpdateCommunity={handleUpdateCommunity}
+            onApplyCommunity={handleApplyCommunity}
+            onCreateCaseFromCommunity={handleCreateCaseFromCommunity}
+            onDeleteCommunity={handleDeleteCommunity}
           />
         ) : (
           <PlayerPortal
@@ -597,7 +894,13 @@ export default function App() {
             cases={cases.filter((c) => c.status === 'published')}
             activeCase={draftCase}
             onSelectCase={handleSelectCase}
-            onRedeemCode={authUser.role === 'player' ? handleRedeemCode : undefined}
+            onRedeemCode={
+              authUser.role === 'player'
+                ? async (code: string) => {
+                    await handleRedeemCode(code);
+                  }
+                : undefined
+            }
             note={note ?? EMPTY_NOTE(draftCase.id, authUser.id)}
             onUpdateNote={setNote}
             onSaveNote={handleSaveNote}

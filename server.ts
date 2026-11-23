@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import fs from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 import type { AuthUser, CaseFile, MapTemplate, PlayerNote } from './src/types.ts';
 import {
@@ -236,15 +237,67 @@ async function startServer(): Promise<void> {
     res.json({ deleted: true });
   });
 
-  // Serve frontend via Vite in dev or static dist in production
   const isProd = process.env.NODE_ENV === 'production';
+
+  function parseCliFlag(flag: string): string | undefined {
+    const args = process.argv.slice(2);
+    for (let i = 0; i < args.length; i++) {
+      const arg = args[i];
+      if (arg === `--${flag}` && i + 1 < args.length) {
+        return args[i + 1];
+      }
+      if (arg.startsWith(`--${flag}=`)) {
+        return arg.slice(flag.length + 3);
+      }
+    }
+    return undefined;
+  }
+
+  const cliPortRaw = parseCliFlag('port');
+  const cliPort = cliPortRaw ? Number(cliPortRaw) : NaN;
+  const envPort = process.env.PORT ? Number(process.env.PORT) : NaN;
+  const defaultAppPort = process.env.DEFAULT_APP_PORT
+    ? Number(process.env.DEFAULT_APP_PORT)
+    : 3000;
+  const nginxPort = process.env.NGINX_PORT ? Number(process.env.NGINX_PORT) : NaN;
+
+  let port = Number.isFinite(cliPort) && cliPort > 0 ? cliPort : NaN;
+  if (!Number.isFinite(port)) {
+    if (isProd && Number.isFinite(envPort) && envPort > 0) {
+      port = envPort;
+    } else if (
+      Number.isFinite(envPort) &&
+      envPort > 0 &&
+      envPort !== nginxPort
+    ) {
+      port = envPort;
+    } else {
+      port = Number.isFinite(defaultAppPort) && defaultAppPort > 0 ? defaultAppPort : 3000;
+    }
+  }
+
+  const host = parseCliFlag('host') || '0.0.0.0';
+  const httpServer = http.createServer(app);
+
+  // Serve frontend via Vite in dev or static dist in production
   if (!isProd) {
-    const { createServer: createViteServer } = await import('vite');
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
+    const disableHmr = process.env.DISABLE_HMR === 'true';
+    const viteReady = import('vite').then(({ createServer: createViteServer }) =>
+      createViteServer({
+        server: {
+          middlewareMode: true,
+          hmr: disableHmr ? false : { server: httpServer },
+          ws: disableHmr ? false : undefined,
+        },
+        appType: 'spa',
+      })
+    );
+
+    app.use((req, res, next) => {
+      viteReady
+        .then((vite) => vite.middlewares(req, res, next))
+        .catch(next);
     });
-    app.use(vite.middlewares);
   } else {
     const distDir = path.resolve(process.cwd(), 'dist');
     app.use(express.static(distDir));
@@ -258,9 +311,12 @@ async function startServer(): Promise<void> {
     });
   }
 
-  const port = process.env.PORT ? Number(process.env.PORT) : 3000;
-  app.listen(port, '0.0.0.0', () => {
-    console.log(`Teiscomysterics server listening on port ${port}`);
+  await new Promise<void>((resolve, reject) => {
+    httpServer.once('error', reject);
+    httpServer.listen(port, host, () => {
+      console.log(`Teiscomysterics server listening on http://${host}:${port}`);
+      resolve();
+    });
   });
 }
 

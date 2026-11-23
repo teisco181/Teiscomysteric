@@ -20,11 +20,13 @@ import {
   Trash2,
   Upload,
   UserPlus,
+  Users,
 } from 'lucide-react';
 import {
   FP_COLS,
   FP_ROWS,
   type CaseFile,
+  type CommunityTemplate,
   type EvidenceCategory,
   type EvidenceItem,
   type EvidenceStamp,
@@ -70,6 +72,12 @@ interface MakerStudioProps {
   onUpdateMapTemplate: (mapId: string) => Promise<void>;
   onApplyMapTemplate: (template: MapTemplate) => void;
   onDeleteMapTemplate: (mapId: string) => Promise<void>;
+  communities: CommunityTemplate[];
+  onSaveNewCommunity: (name: string, description: string) => Promise<void>;
+  onUpdateCommunity: (communityId: string) => Promise<void>;
+  onApplyCommunity: (community: CommunityTemplate) => void;
+  onCreateCaseFromCommunity: (community: CommunityTemplate) => Promise<void>;
+  onDeleteCommunity: (communityId: string) => Promise<void>;
 }
 
 const PRESET_PORTRAITS = [
@@ -110,6 +118,12 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
   onUpdateMapTemplate,
   onApplyMapTemplate,
   onDeleteMapTemplate,
+  communities,
+  onSaveNewCommunity,
+  onUpdateCommunity,
+  onApplyCommunity,
+  onCreateCaseFromCommunity,
+  onDeleteCommunity,
 }) => {
   const [copiedCode, setCopiedCode] = useState(false);
   const [selectedPersonId, setSelectedPersonId] = useState<string>(
@@ -125,6 +139,16 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
   const [fpSeed, setFpSeed] = useState(15);
   const [confirmDeleteCase, setConfirmDeleteCase] = useState(false);
 
+  // Communities state
+  const [selectedCommunityId, setSelectedCommunityId] = useState<string>(
+    communities[0]?.id ?? ''
+  );
+  const [newCommunityName, setNewCommunityName] = useState('');
+  const [newCommunityDesc, setNewCommunityDesc] = useState('');
+  const [communityBusy, setCommunityBusy] = useState(false);
+  const [confirmDeleteCommunity, setConfirmDeleteCommunity] = useState(false);
+  const [communityMessage, setCommunityMessage] = useState<string | null>(null);
+
   // Stamp creator controls
   const [stampSourcePersonId, setStampSourcePersonId] = useState<string>(
     activeCase.persons[0]?.id ?? ''
@@ -139,6 +163,14 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
   const [fpGroupMode, setFpGroupMode] = useState<'all' | 'suspects' | 'evidence'>('all');
   const [fpPatternFilter, setFpPatternFilter] = useState<'all' | FingerprintPattern>('all');
   const [selectedFpEvidenceStampId, setSelectedFpEvidenceStampId] = useState<string | null>(null);
+
+  const selectedCommunity = useMemo(
+    () =>
+      communities.find((c) => c.id === selectedCommunityId) ??
+      communities[0] ??
+      null,
+    [communities, selectedCommunityId]
+  );
 
   const selectedPerson = useMemo(
     () =>
@@ -404,9 +436,26 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        onDataUrl(reader.result);
-      }
+      if (typeof reader.result !== 'string') return;
+      const img = new Image();
+      img.onload = () => {
+        const maxDim = 420;
+        const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+        const w = Math.max(1, Math.round(img.width * scale));
+        const h = Math.max(1, Math.round(img.height * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          onDataUrl(reader.result as string);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, w, h);
+        onDataUrl(canvas.toDataURL('image/jpeg', 0.78));
+      };
+      img.onerror = () => onDataUrl(reader.result as string);
+      img.src = reader.result;
     };
     reader.readAsDataURL(file);
   };
@@ -665,6 +714,201 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
           </div>
 
           <aside className="lg:col-span-4 space-y-6">
+            {/* Communities: Reuse complete map + persons across cases */}
+            <div className="p-5 rounded-xl border border-emerald-500/30 bg-white dark:bg-[#0F151D] space-y-4">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                    <Users className="w-4 h-4 text-emerald-500" />
+                    <span>Communities (Dorp + Personen)</span>
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Gebruik dezelfde dorpskaart en vaste bewoners opnieuw voor meerdere dossiers.
+                  </p>
+                </div>
+              </div>
+
+              {communities.length > 0 && (
+                <div className="space-y-2.5 p-3 rounded-lg bg-slate-50 dark:bg-[#090D12] border border-slate-200 dark:border-slate-800">
+                  <label
+                    htmlFor="maker-community-select"
+                    className="block text-[11px] font-medium text-slate-500"
+                  >
+                    Opgeslagen community ({communities.length})
+                  </label>
+                  <select
+                    id="maker-community-select"
+                    value={selectedCommunity?.id ?? ''}
+                    onChange={(e) => {
+                      setSelectedCommunityId(e.target.value);
+                      setConfirmDeleteCommunity(false);
+                    }}
+                    className="w-full px-2.5 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0F151D]"
+                  >
+                    {communities.map((comm) => (
+                      <option key={comm.id} value={comm.id}>
+                        {comm.name} ({comm.persons.length} pers. · {comm.locations.length} loc.)
+                      </option>
+                    ))}
+                  </select>
+
+                  {selectedCommunity && (
+                    <>
+                      <div className="text-[11px] text-slate-600 dark:text-slate-400">
+                        <span className="font-semibold text-slate-800 dark:text-slate-200">
+                          {selectedCommunity.townName}
+                        </span>{' '}
+                        · {selectedCommunity.mapCols}×{selectedCommunity.mapRows} raster
+                        {selectedCommunity.description
+                          ? ` — ${selectedCommunity.description}`
+                          : ''}
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                        <button
+                          type="button"
+                          disabled={communityBusy}
+                          onClick={() => {
+                            onApplyCommunity(selectedCommunity);
+                            setCommunityMessage(
+                              `Community "${selectedCommunity.name}" geladen in dit dossier.`
+                            );
+                            setTimeout(() => setCommunityMessage(null), 3500);
+                          }}
+                          className="px-2.5 py-2 text-xs font-medium rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50"
+                        >
+                          Inladen in dit dossier
+                        </button>
+                        <button
+                          type="button"
+                          disabled={communityBusy}
+                          onClick={async () => {
+                            setCommunityBusy(true);
+                            try {
+                              await onCreateCaseFromCommunity(selectedCommunity);
+                            } finally {
+                              setCommunityBusy(false);
+                            }
+                          }}
+                          className="px-2.5 py-2 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50"
+                        >
+                          Nieuw dossier maken
+                        </button>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-200 dark:border-slate-800">
+                        <button
+                          type="button"
+                          disabled={communityBusy}
+                          onClick={async () => {
+                            setCommunityBusy(true);
+                            try {
+                              await onUpdateCommunity(selectedCommunity.id);
+                              setCommunityMessage(
+                                `Community "${selectedCommunity.name}" bijgewerkt.`
+                              );
+                              setTimeout(() => setCommunityMessage(null), 3000);
+                            } finally {
+                              setCommunityBusy(false);
+                            }
+                          }}
+                          className="text-[11px] font-medium text-sky-600 dark:text-sky-400 hover:underline disabled:opacity-50"
+                        >
+                          Huidige kaart + personen opslaan in &quot;{selectedCommunity.name}&quot;
+                        </button>
+
+                        {!confirmDeleteCommunity ? (
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteCommunity(true)}
+                            className="text-[11px] text-rose-600 dark:text-rose-400 hover:underline"
+                          >
+                            Verwijder
+                          </button>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              disabled={communityBusy}
+                              onClick={async () => {
+                                setCommunityBusy(true);
+                                try {
+                                  await onDeleteCommunity(selectedCommunity.id);
+                                  setConfirmDeleteCommunity(false);
+                                } finally {
+                                  setCommunityBusy(false);
+                                }
+                              }}
+                              className="text-[11px] font-semibold text-rose-600 dark:text-rose-400 hover:underline"
+                            >
+                              Bevestig verwijderen
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteCommunity(false)}
+                              className="text-[11px] text-slate-500 hover:underline"
+                            >
+                              Annuleer
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  const clean = newCommunityName.trim();
+                  if (!clean) return;
+                  setCommunityBusy(true);
+                  try {
+                    await onSaveNewCommunity(clean, newCommunityDesc.trim());
+                    setNewCommunityName('');
+                    setNewCommunityDesc('');
+                    setCommunityMessage(`Community "${clean}" opgeslagen in Firestore.`);
+                    setTimeout(() => setCommunityMessage(null), 3500);
+                  } finally {
+                    setCommunityBusy(false);
+                  }
+                }}
+                className="space-y-2"
+              >
+                <div className="text-[11px] font-medium text-slate-600 dark:text-slate-400">
+                  Nieuwe community opslaan vanuit dit dossier
+                </div>
+                <input
+                  type="text"
+                  value={newCommunityName}
+                  onChange={(e) => setNewCommunityName(e.target.value)}
+                  placeholder="Naam, bijv. Kraaiendonk Seizoen 2"
+                  className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-[#090D12]"
+                />
+                <input
+                  type="text"
+                  value={newCommunityDesc}
+                  onChange={(e) => setNewCommunityDesc(e.target.value)}
+                  placeholder="Korte omschrijving (optioneel)"
+                  className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-[#090D12]"
+                />
+                <button
+                  type="submit"
+                  disabled={communityBusy || !newCommunityName.trim()}
+                  className="w-full px-3 py-2 text-xs font-semibold rounded-lg border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 disabled:opacity-50"
+                >
+                  {communityBusy ? 'Opslaan...' : 'Kaart + personen opslaan als Community'}
+                </button>
+              </form>
+
+              {communityMessage && (
+                <div className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                  {communityMessage}
+                </div>
+              )}
+            </div>
+
             <div className="p-6 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0F151D] space-y-4">
               <h3 className="text-sm font-bold text-slate-900 dark:text-white">
                 Snelle Bouwstappen

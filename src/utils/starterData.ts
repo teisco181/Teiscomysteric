@@ -359,3 +359,23 @@ export function createStarterMapTemplate(starter: CaseFile): MapTemplate {
     updatedAt: starter.updatedAt,
   };
 }
+
+export function createStarterCommunity(starter: CaseFile) {
+  return {
+    id: 'comm-kraaiendonk-basis',
+    name: 'Kraaiendonk Community',
+    description: 'Compleet dorp met havenkade, marktplein en de 4 standaard bewoners inclusief vingerafdrukken.',
+    townName: starter.townName,
+    mapCols: starter.mapCols,
+    mapRows: starter.mapRows,
+    terrain: [...starter.terrain],
+    locations: starter.locations.map((loc) => ({ ...loc })),
+    persons: starter.persons.map((p) => ({
+      ...p,
+      fingerprint: [...p.fingerprint],
+    })),
+    createdAt: starter.createdAt,
+    updatedAt: starter.updatedAt,
+  };
+}
+
