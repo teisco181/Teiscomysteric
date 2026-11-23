@@ -14,6 +14,7 @@ import {
   Printer,
   RotateCcw,
   Save,
+  Search,
   Sparkles,
   Stamp,
   Trash2,
@@ -133,6 +134,12 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
     'full'
   );
 
+  // Vingerafdrukken tab search, filter & grouping
+  const [fpSearch, setFpSearch] = useState('');
+  const [fpGroupMode, setFpGroupMode] = useState<'all' | 'suspects' | 'evidence'>('all');
+  const [fpPatternFilter, setFpPatternFilter] = useState<'all' | FingerprintPattern>('all');
+  const [selectedFpEvidenceStampId, setSelectedFpEvidenceStampId] = useState<string | null>(null);
+
   const selectedPerson = useMemo(
     () =>
       activeCase.persons.find((p) => p.id === selectedPersonId) ??
@@ -156,6 +163,101 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
       null,
     [selectedEvidence, selectedStampId]
   );
+
+  const stampsByPersonId = useMemo(() => {
+    const map = new Map<
+      string,
+      Array<{ evidenceId: string; evidenceCode: string; evidenceTitle: string; stamp: EvidenceStamp }>
+    >();
+    for (const ev of activeCase.evidence) {
+      for (const st of ev.stamps) {
+        if (!st.personId) continue;
+        const list = map.get(st.personId) ?? [];
+        list.push({
+          evidenceId: ev.id,
+          evidenceCode: ev.code,
+          evidenceTitle: ev.title,
+          stamp: st,
+        });
+        map.set(st.personId, list);
+      }
+    }
+    return map;
+  }, [activeCase.evidence]);
+
+  const filteredFpPersons = useMemo(() => {
+    const q = fpSearch.trim().toLowerCase();
+    return activeCase.persons.filter((person) => {
+      if (fpGroupMode === 'suspects' && person.status !== 'verdachte') {
+        return false;
+      }
+      if (fpPatternFilter !== 'all' && person.fingerprintPattern !== fpPatternFilter) {
+        return false;
+      }
+      if (!q) return true;
+      const linkedStamps = stampsByPersonId.get(person.id) ?? [];
+      const matchesPerson =
+        person.name.toLowerCase().includes(q) ||
+        person.code.toLowerCase().includes(q) ||
+        person.fingerprintCode.toLowerCase().includes(q) ||
+        person.fingerprintPattern.toLowerCase().includes(q) ||
+        person.status.toLowerCase().includes(q);
+      const matchesLinkedEvidence = linkedStamps.some(
+        (item) =>
+          item.evidenceCode.toLowerCase().includes(q) ||
+          item.evidenceTitle.toLowerCase().includes(q) ||
+          item.stamp.label.toLowerCase().includes(q)
+      );
+      return matchesPerson || matchesLinkedEvidence;
+    });
+  }, [activeCase.persons, fpSearch, fpGroupMode, fpPatternFilter, stampsByPersonId]);
+
+  const filteredFpEvidenceGroups = useMemo(() => {
+    const q = fpSearch.trim().toLowerCase();
+    return activeCase.evidence
+      .map((ev) => {
+        const stampsWithPerson = ev.stamps
+          .map((st) => ({
+            stamp: st,
+            person: activeCase.persons.find((p) => p.id === st.personId) ?? null,
+          }))
+          .filter(({ stamp, person }) => {
+            if (fpPatternFilter !== 'all' && person?.fingerprintPattern !== fpPatternFilter) {
+              return false;
+            }
+            if (!q) return true;
+            return (
+              ev.title.toLowerCase().includes(q) ||
+              ev.code.toLowerCase().includes(q) ||
+              stamp.label.toLowerCase().includes(q) ||
+              (person?.name.toLowerCase().includes(q) ?? false) ||
+              (person?.fingerprintCode.toLowerCase().includes(q) ?? false) ||
+              (person?.fingerprintPattern.toLowerCase().includes(q) ?? false)
+            );
+          });
+        return { evidence: ev, items: stampsWithPerson };
+      })
+      .filter(({ evidence, items }) => {
+        if (items.length > 0) return true;
+        if (!q && fpPatternFilter === 'all') return true;
+        return (
+          fpPatternFilter === 'all' &&
+          (evidence.title.toLowerCase().includes(q) ||
+            evidence.code.toLowerCase().includes(q))
+        );
+      });
+  }, [activeCase.evidence, activeCase.persons, fpSearch, fpPatternFilter]);
+
+  const selectedFpEvidenceContext = useMemo(() => {
+    if (!selectedFpEvidenceStampId) return null;
+    for (const ev of activeCase.evidence) {
+      const st = ev.stamps.find((s) => s.id === selectedFpEvidenceStampId);
+      if (st) {
+        return { evidence: ev, stamp: st };
+      }
+    }
+    return null;
+  }, [activeCase.evidence, selectedFpEvidenceStampId]);
 
   const updatePerson = (personId: string, patch: Partial<Person>) => {
     onUpdateDraft({
@@ -363,7 +465,7 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
           )}
           {isDirty && !saveMessage && (
             <span className="text-xs font-medium text-amber-600 dark:text-amber-400">
-              Niet-opgeslagen wijzigingen
+              Wordt elke 5s automatisch opgeslagen
             </span>
           )}
 
@@ -1026,37 +1128,230 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
                 03. Vingerafdrukstudio (Pixelscherm)
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                Kies een persoon en teken of genereer de 16×20 pixel-vingerafdruk.
+                Zoek of groepeer vingerafdrukken per persoon, verdachte of bewijsstuk.
               </p>
             </div>
 
-            <div className="space-y-2">
-              {activeCase.persons.map((person) => (
-                <button
-                  key={person.id}
-                  type="button"
-                  onClick={() => setSelectedPersonId(person.id)}
-                  className={`w-full flex items-center justify-between gap-3 p-2.5 rounded-lg border text-left transition-colors ${
-                    selectedPerson?.id === person.id
-                      ? 'border-emerald-500 bg-emerald-500/10'
-                      : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#090D12]'
-                  }`}
+            {/* Search + Pattern Filter */}
+            <div className="space-y-2.5">
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  value={fpSearch}
+                  onChange={(e) => setFpSearch(e.target.value)}
+                  placeholder="Zoek naam, spoorcode, patroon of bewijsstuk..."
+                  className="w-full pl-8 pr-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-[#090D12] text-slate-900 dark:text-white placeholder:text-slate-400"
+                />
+              </div>
+
+              <div className="grid grid-cols-3 gap-1 p-1 rounded-lg bg-slate-100 dark:bg-[#090D12] border border-slate-200 dark:border-slate-800">
+                {(
+                  [
+                    { id: 'all', label: 'Personen' },
+                    { id: 'suspects', label: 'Verdachten' },
+                    { id: 'evidence', label: 'Bewijsstukken' },
+                  ] as const
+                ).map((mode) => (
+                  <button
+                    key={mode.id}
+                    type="button"
+                    onClick={() => setFpGroupMode(mode.id)}
+                    className={`px-2 py-1.5 text-[11px] font-medium rounded-md transition-colors whitespace-nowrap ${
+                      fpGroupMode === mode.id
+                        ? 'bg-white dark:bg-[#17202B] text-slate-900 dark:text-white shadow-sm'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    {mode.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center justify-between gap-2">
+                <label
+                  htmlFor="fp-pattern-filter"
+                  className="text-[11px] font-medium text-slate-500 dark:text-slate-400 shrink-0"
                 >
-                  <div className="min-w-0">
-                    <div className="text-xs font-semibold text-slate-900 dark:text-white truncate">
-                      {person.name}
-                    </div>
-                    <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
-                      {person.fingerprintCode} · {person.fingerprintPattern}
-                    </div>
-                  </div>
-                  <FingerprintGrid matrix={person.fingerprint} cellSize={3} />
-                </button>
-              ))}
+                  Patroon:
+                </label>
+                <select
+                  id="fp-pattern-filter"
+                  value={fpPatternFilter}
+                  onChange={(e) =>
+                    setFpPatternFilter(e.target.value as 'all' | FingerprintPattern)
+                  }
+                  className="flex-1 px-2.5 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-[#090D12]"
+                >
+                  <option value="all">Alle patronen</option>
+                  <option value="Kring">Kring (Whorl)</option>
+                  <option value="Lus">Lus (Loop)</option>
+                  <option value="Boog">Boog (Arch)</option>
+                  <option value="Samengesteld">Samengesteld</option>
+                </select>
+              </div>
             </div>
+
+            {fpGroupMode === 'evidence' ? (
+              <div className="space-y-3 max-h-[540px] overflow-y-auto pr-1">
+                {filteredFpEvidenceGroups.length === 0 ? (
+                  <p className="text-xs text-slate-500 py-8 text-center">
+                    Geen bewijsstukken of sporen gevonden voor deze filter.
+                  </p>
+                ) : (
+                  filteredFpEvidenceGroups.map(({ evidence, items }) => (
+                    <div
+                      key={evidence.id}
+                      className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#090D12] overflow-hidden"
+                    >
+                      <div className="px-3 py-2 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 bg-slate-100/80 dark:bg-[#0D131B]">
+                        <div className="min-w-0">
+                          <span className="font-mono text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+                            {evidence.code}
+                          </span>
+                          <span className="text-xs font-semibold text-slate-900 dark:text-white ml-1.5 truncate">
+                            {evidence.title}
+                          </span>
+                        </div>
+                        <span className="text-[11px] font-mono text-slate-500 shrink-0">
+                          {items.length} spoor
+                        </span>
+                      </div>
+
+                      {items.length === 0 ? (
+                        <div className="px-3 py-2.5 text-[11px] text-slate-500">
+                          Geen overeenkomende sporen op dit bewijsstuk.
+                        </div>
+                      ) : (
+                        <div className="p-2 space-y-1.5">
+                          {items.map(({ stamp, person }) => {
+                            const isActive =
+                              selectedFpEvidenceStampId === stamp.id ||
+                              (!selectedFpEvidenceStampId &&
+                                person?.id === selectedPerson?.id);
+                            return (
+                              <button
+                                key={stamp.id}
+                                type="button"
+                                onClick={() => {
+                                  if (person) {
+                                    setSelectedPersonId(person.id);
+                                  }
+                                  setSelectedFpEvidenceStampId(stamp.id);
+                                }}
+                                className={`w-full flex items-center justify-between gap-2.5 p-2 rounded-md border text-left transition-colors ${
+                                  isActive
+                                    ? 'border-emerald-500 bg-emerald-500/10'
+                                    : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0F151D] hover:border-slate-400'
+                                }`}
+                              >
+                                <div className="min-w-0">
+                                  <div className="text-xs font-semibold text-slate-900 dark:text-white truncate">
+                                    {stamp.label}
+                                  </div>
+                                  <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400 truncate">
+                                    {person
+                                      ? `${person.name} · ${person.fingerprintCode}`
+                                      : 'Onbekende bron'}{' '}
+                                    · {stamp.smudgeLevel}% vaag
+                                  </div>
+                                </div>
+                                <FingerprintGrid matrix={stamp.matrix} cellSize={3} />
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-[540px] overflow-y-auto pr-1">
+                {filteredFpPersons.length === 0 ? (
+                  <p className="text-xs text-slate-500 py-8 text-center">
+                    Geen personen gevonden voor deze zoekopdracht.
+                  </p>
+                ) : (
+                  filteredFpPersons.map((person) => {
+                    const linked = stampsByPersonId.get(person.id) ?? [];
+                    return (
+                      <button
+                        key={person.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedPersonId(person.id);
+                          setSelectedFpEvidenceStampId(null);
+                        }}
+                        className={`w-full flex items-center justify-between gap-3 p-2.5 rounded-lg border text-left transition-colors ${
+                          selectedPerson?.id === person.id
+                            ? 'border-emerald-500 bg-emerald-500/10'
+                            : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#090D12] hover:border-slate-400'
+                        }`}
+                      >
+                        <div className="min-w-0 space-y-0.5">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xs font-semibold text-slate-900 dark:text-white truncate">
+                              {person.name}
+                            </span>
+                            {person.status === 'verdachte' && (
+                              <span className="text-[10px] font-mono text-rose-500 shrink-0">
+                                Verdachte
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400 truncate">
+                            {person.fingerprintCode} · {person.fingerprintPattern}
+                          </div>
+                          {linked.length > 0 && (
+                            <div className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 truncate">
+                              Op {linked.map((l) => l.evidenceCode).join(', ')}
+                            </div>
+                          )}
+                        </div>
+                        <FingerprintGrid matrix={person.fingerprint} cellSize={3} />
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            )}
           </div>
 
-          <div className="lg:col-span-8 p-6 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0F151D]">
+          <div className="lg:col-span-8 p-6 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0F151D] space-y-5">
+            {selectedFpEvidenceContext && (
+              <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-lg border border-emerald-500/30 bg-emerald-500/5">
+                <div className="flex items-center gap-3">
+                  <FingerprintGrid
+                    matrix={selectedFpEvidenceContext.stamp.matrix}
+                    cellSize={4}
+                  />
+                  <div>
+                    <div className="text-xs font-mono font-semibold text-emerald-700 dark:text-emerald-300">
+                      {selectedFpEvidenceContext.stamp.label} op{' '}
+                      {selectedFpEvidenceContext.evidence.code} —{' '}
+                      {selectedFpEvidenceContext.evidence.title}
+                    </div>
+                    <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                      Vervaging: {selectedFpEvidenceContext.stamp.smudgeLevel}%. Hieronder
+                      bewerk je de originele afdruk van de gekoppelde persoon.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedEvidenceId(selectedFpEvidenceContext.evidence.id);
+                    setSelectedStampId(selectedFpEvidenceContext.stamp.id);
+                    onChangeTab('bewijsstukken');
+                  }}
+                  className="px-3 py-1.5 text-xs font-medium rounded-lg border border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10"
+                >
+                  Open in Bewijsstukken
+                </button>
+              </div>
+            )}
+
             {!selectedPerson ? (
               <div className="py-12 text-center text-sm text-slate-500">
                 Voeg eerst een persoon toe bij het tabblad Personen.

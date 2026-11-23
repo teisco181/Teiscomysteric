@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LogOut, Moon, RefreshCw, Shield, Sun, User } from 'lucide-react';
 import { api } from './api.ts';
 import { AuthPortal } from './components/AuthPortal.tsx';
@@ -53,6 +53,28 @@ export default function App() {
   const [loadingData, setLoadingData] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [showPrintModal, setShowPrintModal] = useState(false);
+
+  const latestDraftRef = useRef<CaseFile | null>(null);
+  const activeCaseIdRef = useRef<string>('');
+  const isDirtyRef = useRef(false);
+  const isSavingRef = useRef(false);
+  const draftVersionRef = useRef(0);
+
+  useEffect(() => {
+    latestDraftRef.current = draftCase;
+  }, [draftCase]);
+
+  useEffect(() => {
+    activeCaseIdRef.current = activeCaseId;
+  }, [activeCaseId]);
+
+  useEffect(() => {
+    isDirtyRef.current = isDirty;
+  }, [isDirty]);
+
+  useEffect(() => {
+    isSavingRef.current = isSavingCase;
+  }, [isSavingCase]);
 
   // Sync Tailwind v4 `.dark` class on <html>
   useEffect(() => {
@@ -146,6 +168,7 @@ export default function App() {
   const handleSelectCase = (caseId: string) => {
     const found = cases.find((c) => c.id === caseId);
     if (!found) return;
+    draftVersionRef.current += 1;
     setActiveCaseId(found.id);
     setDraftCase(found);
     setIsDirty(false);
@@ -154,33 +177,68 @@ export default function App() {
   };
 
   const handleUpdateDraft = (next: CaseFile) => {
+    draftVersionRef.current += 1;
+    latestDraftRef.current = next;
+    isDirtyRef.current = true;
     setDraftCase(next);
     setIsDirty(true);
     setSaveMessage(null);
   };
 
-  const handleSaveCase = async (overrideCase?: CaseFile) => {
-    const target = overrideCase ?? draftCase;
-    if (!token || !target) return;
-    setIsSavingCase(true);
-    setSaveMessage(null);
-    try {
-      const res = await api.updateCase(token, target.id, target);
-      setCases((prev) =>
-        prev.map((c) => (c.id === res.caseFile.id ? res.caseFile : c))
-      );
-      setDraftCase(res.caseFile);
-      setIsDirty(false);
-      setSaveMessage('Dossier opgeslagen');
-      setTimeout(() => setSaveMessage(null), 3000);
-    } catch (err) {
-      setSaveMessage(
-        err instanceof Error ? err.message : 'Opslaan mislukt.'
-      );
-    } finally {
-      setIsSavingCase(false);
-    }
-  };
+  const handleSaveCase = useCallback(
+    async (overrideCase?: CaseFile, options?: { auto?: boolean }) => {
+      const target = overrideCase ?? latestDraftRef.current;
+      if (!token || !target || isSavingRef.current) return;
+      const versionAtStart = draftVersionRef.current;
+      const targetId = target.id;
+
+      isSavingRef.current = true;
+      setIsSavingCase(true);
+      if (!options?.auto) {
+        setSaveMessage(null);
+      }
+      try {
+        const res = await api.updateCase(token, target.id, target);
+        setCases((prev) =>
+          prev.map((c) => (c.id === res.caseFile.id ? res.caseFile : c))
+        );
+        // Only overwrite draftCase if the user did not edit or switch cases while saving
+        if (
+          draftVersionRef.current === versionAtStart &&
+          activeCaseIdRef.current === targetId
+        ) {
+          setDraftCase(res.caseFile);
+          latestDraftRef.current = res.caseFile;
+          setIsDirty(false);
+          isDirtyRef.current = false;
+        }
+        setSaveMessage(
+          options?.auto ? 'Automatisch opgeslagen' : 'Dossier opgeslagen'
+        );
+        setTimeout(() => setSaveMessage(null), 3000);
+      } catch (err) {
+        setSaveMessage(
+          err instanceof Error ? err.message : 'Opslaan mislukt.'
+        );
+      } finally {
+        isSavingRef.current = false;
+        setIsSavingCase(false);
+      }
+    },
+    [token]
+  );
+
+  // Auto-save active dossier every 5 seconds while editing in Maker mode
+  useEffect(() => {
+    if (!token || authUser?.role !== 'admin' || viewMode !== 'maker') return;
+    const intervalId = window.setInterval(() => {
+      if (!isDirtyRef.current || isSavingRef.current) return;
+      const current = latestDraftRef.current;
+      if (!current) return;
+      void handleSaveCase(current, { auto: true });
+    }, 5000);
+    return () => window.clearInterval(intervalId);
+  }, [token, authUser?.role, viewMode, handleSaveCase]);
 
   const handleCreateCase = async () => {
     if (!token) return;
