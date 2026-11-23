@@ -147,6 +147,34 @@ function serializeLocations(locations: unknown): MapLocation[] {
     if (loc.zoneColor) {
       base.zoneColor = loc.zoneColor;
     }
+    if (Array.isArray(loc.cells) && loc.cells.length > 0) {
+      const seen = new Set<string>();
+      const cleanCells: { x: number; y: number }[] = [];
+      for (const cell of loc.cells) {
+        if (!cell || typeof cell !== 'object') continue;
+        const cx = Math.max(0, Math.min(47, Math.floor(Number(cell.x ?? 0))));
+        const cy = Math.max(0, Math.min(35, Math.floor(Number(cell.y ?? 0))));
+        const key = `${cx},${cy}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          cleanCells.push({ x: cx, y: cy });
+        }
+        if (cleanCells.length >= 1728) break;
+      }
+      if (cleanCells.length > 0) {
+        base.cells = cleanCells;
+        const xs = cleanCells.map((c) => c.x);
+        const ys = cleanCells.map((c) => c.y);
+        const minX = Math.min(...xs);
+        const maxX = Math.max(...xs);
+        const minY = Math.min(...ys);
+        const maxY = Math.max(...ys);
+        base.x = minX;
+        base.y = minY;
+        base.width = Math.max(1, maxX - minX + 1);
+        base.height = Math.max(1, maxY - minY + 1);
+      }
+    }
     return base;
   });
 }

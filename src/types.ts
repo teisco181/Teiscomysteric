@@ -43,6 +43,11 @@ export type LocationCategory =
 export type MapLocationKind = 'building' | 'zone';
 export type ZoneColor = 'emerald' | 'sky' | 'amber' | 'rose' | 'violet';
 
+export interface MapTileCoord {
+  x: number;
+  y: number;
+}
+
 export interface MapLocation {
   id: string;
   code: string;
@@ -50,6 +55,7 @@ export interface MapLocation {
   category: LocationCategory;
   kind?: MapLocationKind;
   zoneColor?: ZoneColor;
+  cells?: MapTileCoord[];
   x: number;
   y: number;
   width: number;

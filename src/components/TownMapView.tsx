@@ -2,12 +2,14 @@ import React, { useMemo, useState } from 'react';
 import {
   Anchor,
   Building2,
+  Check,
   CircleDashed,
   Coffee,
   Compass,
   Eye,
   EyeOff,
   FolderOpen,
+  Grid2X2,
   Home,
   Landmark,
   Map as MapIcon,
@@ -21,6 +23,7 @@ import {
   Store,
   Trash2,
   Trees,
+  X,
 } from 'lucide-react';
 import {
   MAP_COLS,
@@ -31,6 +34,7 @@ import {
   type MapLocation,
   type MapLocationKind,
   type MapTemplate,
+  type MapTileCoord,
   type Person,
   type TerrainType,
   type ZoneColor,
@@ -110,44 +114,56 @@ const ZONE_COLOR_META: Record<
   ZoneColor,
   {
     label: string;
-    fillAndBorder: string;
-    selectedRing: string;
+    borderColor: string;
+    selectedBorderColor: string;
+    bgColor: string;
+    selectedBgColor: string;
     badge: string;
     swatch: string;
   }
 > = {
   emerald: {
     label: 'Groen (Park)',
-    fillAndBorder: 'border-emerald-500/80 bg-emerald-500/15 text-emerald-950 dark:text-emerald-100',
-    selectedRing: 'ring-2 ring-emerald-400 bg-emerald-500/25 border-emerald-400',
+    borderColor: 'border-emerald-500/85',
+    selectedBorderColor: 'border-emerald-300',
+    bgColor: 'bg-emerald-500/20 hover:bg-emerald-500/30',
+    selectedBgColor: 'bg-emerald-500/35',
     badge: 'bg-emerald-600 text-white border-emerald-400',
     swatch: 'bg-emerald-500',
   },
   sky: {
     label: 'Blauw (Vliegveld / Water)',
-    fillAndBorder: 'border-sky-500/80 bg-sky-500/15 text-sky-950 dark:text-sky-100',
-    selectedRing: 'ring-2 ring-sky-400 bg-sky-500/25 border-sky-400',
+    borderColor: 'border-sky-500/85',
+    selectedBorderColor: 'border-sky-300',
+    bgColor: 'bg-sky-500/20 hover:bg-sky-500/30',
+    selectedBgColor: 'bg-sky-500/35',
     badge: 'bg-sky-600 text-white border-sky-400',
     swatch: 'bg-sky-500',
   },
   amber: {
     label: 'Amber (Terrein / Industrie)',
-    fillAndBorder: 'border-amber-500/80 bg-amber-500/15 text-amber-950 dark:text-amber-100',
-    selectedRing: 'ring-2 ring-amber-400 bg-amber-500/25 border-amber-400',
+    borderColor: 'border-amber-500/85',
+    selectedBorderColor: 'border-amber-300',
+    bgColor: 'bg-amber-500/20 hover:bg-amber-500/30',
+    selectedBgColor: 'bg-amber-500/35',
     badge: 'bg-amber-600 text-white border-amber-400',
     swatch: 'bg-amber-500',
   },
   rose: {
     label: 'Rood (Verboden / Delict)',
-    fillAndBorder: 'border-rose-500/80 bg-rose-500/15 text-rose-950 dark:text-rose-100',
-    selectedRing: 'ring-2 ring-rose-400 bg-rose-500/25 border-rose-400',
+    borderColor: 'border-rose-500/85',
+    selectedBorderColor: 'border-rose-300',
+    bgColor: 'bg-rose-500/20 hover:bg-rose-500/30',
+    selectedBgColor: 'bg-rose-500/35',
     badge: 'bg-rose-600 text-white border-rose-400',
     swatch: 'bg-rose-500',
   },
   violet: {
     label: 'Paars (Evenement / Zone)',
-    fillAndBorder: 'border-violet-500/80 bg-violet-500/15 text-violet-950 dark:text-violet-100',
-    selectedRing: 'ring-2 ring-violet-400 bg-violet-500/25 border-violet-400',
+    borderColor: 'border-violet-500/85',
+    selectedBorderColor: 'border-violet-300',
+    bgColor: 'bg-violet-500/20 hover:bg-violet-500/30',
+    selectedBgColor: 'bg-violet-500/35',
     badge: 'bg-violet-600 text-white border-violet-400',
     swatch: 'bg-violet-500',
   },
@@ -204,6 +220,84 @@ function getLocationKind(loc: MapLocation): MapLocationKind {
   return loc.kind === 'zone' ? 'zone' : 'building';
 }
 
+function tileKey(x: number, y: number): string {
+  return `${x},${y}`;
+}
+
+function getLocationCells(
+  loc: MapLocation,
+  mapCols: number,
+  mapRows: number
+): MapTileCoord[] {
+  if (Array.isArray(loc.cells) && loc.cells.length > 0) {
+    const seen = new Set<string>();
+    const valid: MapTileCoord[] = [];
+    for (const c of loc.cells) {
+      const cx = Math.floor(Number(c.x));
+      const cy = Math.floor(Number(c.y));
+      if (cx < 0 || cx >= mapCols || cy < 0 || cy >= mapRows) continue;
+      const k = tileKey(cx, cy);
+      if (!seen.has(k)) {
+        seen.add(k);
+        valid.push({ x: cx, y: cy });
+      }
+    }
+    if (valid.length > 0) return valid;
+  }
+
+  const cells: MapTileCoord[] = [];
+  const startX = Math.max(0, Math.min(mapCols - 1, loc.x));
+  const startY = Math.max(0, Math.min(mapRows - 1, loc.y));
+  const endX = Math.min(mapCols, startX + Math.max(1, loc.width));
+  const endY = Math.min(mapRows, startY + Math.max(1, loc.height));
+  for (let cy = startY; cy < endY; cy++) {
+    for (let cx = startX; cx < endX; cx++) {
+      cells.push({ x: cx, y: cy });
+    }
+  }
+  return cells;
+}
+
+function computeBoundingBox(cells: MapTileCoord[]): {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+} {
+  if (cells.length === 0) return { x: 0, y: 0, width: 1, height: 1 };
+  let minX = cells[0].x;
+  let maxX = cells[0].x;
+  let minY = cells[0].y;
+  let maxY = cells[0].y;
+  for (const c of cells) {
+    if (c.x < minX) minX = c.x;
+    if (c.x > maxX) maxX = c.x;
+    if (c.y < minY) minY = c.y;
+    if (c.y > maxY) maxY = c.y;
+  }
+  return {
+    x: minX,
+    y: minY,
+    width: Math.max(1, maxX - minX + 1),
+    height: Math.max(1, maxY - minY + 1),
+  };
+}
+
+function isTileInLocation(
+  x: number,
+  y: number,
+  loc: MapLocation,
+  mapCols: number,
+  mapRows: number
+): boolean {
+  if (getLocationKind(loc) === 'zone' && Array.isArray(loc.cells) && loc.cells.length > 0) {
+    return getLocationCells(loc, mapCols, mapRows).some(
+      (c) => c.x === x && c.y === y
+    );
+  }
+  return x >= loc.x && x < loc.x + loc.width && y >= loc.y && y < loc.y + loc.height;
+}
+
 export const TownMapView: React.FC<TownMapViewProps> = ({
   caseFile,
   editable = false,
@@ -221,12 +315,8 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
   );
   const [paintTerrain, setPaintTerrain] = useState<TerrainType | null>(null);
   const [placeMode, setPlaceMode] = useState<MapLocationKind | null>(null);
-  const [zoneDrawStart, setZoneDrawStart] = useState<{ x: number; y: number } | null>(
-    null
-  );
-  const [zoneDrawCurrent, setZoneDrawCurrent] = useState<{ x: number; y: number } | null>(
-    null
-  );
+  const [selectedTiles, setSelectedTiles] = useState<MapTileCoord[]>([]);
+  const [tileDragMode, setTileDragMode] = useState<'add' | 'remove' | null>(null);
   const [movingLocId, setMovingLocId] = useState<string | null>(null);
   const [isPainting, setIsPainting] = useState(false);
   const [search, setSearch] = useState('');
@@ -288,12 +378,8 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
 
   const hoveredLocations = useMemo(() => {
     if (!hoveredTile) return [];
-    const matches = caseFile.locations.filter(
-      (loc) =>
-        hoveredTile.x >= loc.x &&
-        hoveredTile.x < loc.x + loc.width &&
-        hoveredTile.y >= loc.y &&
-        hoveredTile.y < loc.y + loc.height
+    const matches = caseFile.locations.filter((loc) =>
+      isTileInLocation(hoveredTile.x, hoveredTile.y, loc, mapCols, mapRows)
     );
     // Show solid buildings before enclosing POV zones
     return matches.sort((a, b) => {
@@ -301,16 +387,23 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
       const kb = getLocationKind(b) === 'building' ? 0 : 1;
       return ka - kb;
     });
-  }, [hoveredTile, caseFile.locations]);
+  }, [hoveredTile, caseFile.locations, mapCols, mapRows]);
 
-  const zonePreviewRect = useMemo(() => {
-    if (!zoneDrawStart || !zoneDrawCurrent) return null;
-    const x = Math.min(zoneDrawStart.x, zoneDrawCurrent.x);
-    const y = Math.min(zoneDrawStart.y, zoneDrawCurrent.y);
-    const width = Math.abs(zoneDrawCurrent.x - zoneDrawStart.x) + 1;
-    const height = Math.abs(zoneDrawCurrent.y - zoneDrawStart.y) + 1;
-    return { x, y, width, height };
-  }, [zoneDrawStart, zoneDrawCurrent]);
+  const selectedTileKeys = useMemo(
+    () => new Set(selectedTiles.map((c) => tileKey(c.x, c.y))),
+    [selectedTiles]
+  );
+
+  const toggleSelectionTile = (x: number, y: number, mode: 'add' | 'remove') => {
+    const key = tileKey(x, y);
+    setSelectedTiles((prev) => {
+      const exists = prev.some((c) => tileKey(c.x, c.y) === key);
+      if (mode === 'add') {
+        return exists ? prev : [...prev, { x, y }];
+      }
+      return exists ? prev.filter((c) => tileKey(c.x, c.y) !== key) : prev;
+    });
+  };
 
   const resizeMap = (nextCols: number, nextRows: number) => {
     if (!editable || !onUpdateCase) return;
@@ -330,6 +423,20 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
     }
 
     const nextLocations = caseFile.locations.map((loc) => {
+      if (Array.isArray(loc.cells) && loc.cells.length > 0) {
+        const clampedCells = loc.cells.map((c) => ({
+          x: Math.max(0, Math.min(clampedCols - 1, c.x)),
+          y: Math.max(0, Math.min(clampedRows - 1, c.y)),
+        }));
+        const unique = Array.from(
+          new Map(clampedCells.map((c) => [tileKey(c.x, c.y), c])).values()
+        );
+        return {
+          ...loc,
+          cells: unique,
+          ...computeBoundingBox(unique),
+        };
+      }
       const w = Math.min(loc.width, clampedCols);
       const h = Math.min(loc.height, clampedRows);
       return {
@@ -350,25 +457,9 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
     });
   };
 
-  const commitZoneDraw = () => {
-    if (!editable || !onUpdateCase || placeMode !== 'zone' || !zoneDrawStart) {
-      setZoneDrawStart(null);
-      setZoneDrawCurrent(null);
-      return;
-    }
-
-    const end = zoneDrawCurrent ?? zoneDrawStart;
-    const rawX = Math.min(zoneDrawStart.x, end.x);
-    const rawY = Math.min(zoneDrawStart.y, end.y);
-    let width = Math.abs(end.x - zoneDrawStart.x) + 1;
-    let height = Math.abs(end.y - zoneDrawStart.y) + 1;
-
-    // Single click without drag creates a comfortable default 4x3 POV zone
-    if (width === 1 && height === 1) {
-      width = Math.min(4, Math.max(1, mapCols - rawX));
-      height = Math.min(3, Math.max(1, mapRows - rawY));
-    }
-
+  const createNewZoneFromSelectedTiles = () => {
+    if (!editable || !onUpdateCase || selectedTiles.length === 0) return;
+    const box = computeBoundingBox(selectedTiles);
     const nextIndex = zoneLocations.length + 1;
     const nextCode = `POV-${String(nextIndex).padStart(2, '0')}`;
     const created: MapLocation = {
@@ -378,12 +469,10 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
       category: 'park',
       kind: 'zone',
       zoneColor: 'emerald',
-      x: rawX,
-      y: rawY,
-      width,
-      height,
+      cells: selectedTiles,
+      ...box,
       address: `${caseFile.townName} — Sector ${nextIndex}`,
-      description: 'Omcirkeld gebied / POV op de kaart (bijv. park, plein of vliegveld).',
+      description: 'Vrij geselecteerd gebied / POV op de kaart (bijv. park of vliegveld).',
       publicNote: '',
       visibleToPlayers: true,
     };
@@ -393,9 +482,72 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
       locations: [...caseFile.locations, created],
     });
     setSelectedLocId(created.id);
+    setSelectedTiles([]);
+    setTileDragMode(null);
     setPlaceMode(null);
-    setZoneDrawStart(null);
-    setZoneDrawCurrent(null);
+    showNotice(`Nieuw gebied "${created.name}" (${selectedTiles.length} vakken) aangemaakt.`);
+  };
+
+  const addSelectedTilesToZone = () => {
+    if (
+      !editable ||
+      !onUpdateCase ||
+      !selectedLocation ||
+      getLocationKind(selectedLocation) !== 'zone' ||
+      selectedTiles.length === 0
+    ) {
+      return;
+    }
+    const baseCells = getLocationCells(selectedLocation, mapCols, mapRows);
+    const mergedMap = new Map<string, MapTileCoord>();
+    for (const c of baseCells) mergedMap.set(tileKey(c.x, c.y), c);
+    for (const c of selectedTiles) mergedMap.set(tileKey(c.x, c.y), c);
+    const merged = Array.from(mergedMap.values());
+    const box = computeBoundingBox(merged);
+    const addedCount = merged.length - baseCells.length;
+
+    updateSelectedLocation({
+      cells: merged,
+      ...box,
+    });
+    setSelectedTiles([]);
+    setTileDragMode(null);
+    showNotice(
+      addedCount > 0
+        ? `${addedCount} vak(ken) toegevoegd aan "${selectedLocation.name}".`
+        : `Geselecteerde vakken behoorden al tot "${selectedLocation.name}".`
+    );
+  };
+
+  const removeSelectedTilesFromZone = () => {
+    if (
+      !editable ||
+      !onUpdateCase ||
+      !selectedLocation ||
+      getLocationKind(selectedLocation) !== 'zone' ||
+      selectedTiles.length === 0
+    ) {
+      return;
+    }
+    const baseCells = getLocationCells(selectedLocation, mapCols, mapRows);
+    const removeKeys = new Set(selectedTiles.map((c) => tileKey(c.x, c.y)));
+    const remaining = baseCells.filter((c) => !removeKeys.has(tileKey(c.x, c.y)));
+    if (remaining.length === 0) {
+      showNotice('Een gebied moet minimaal 1 vak behouden.');
+      return;
+    }
+    const box = computeBoundingBox(remaining);
+    const removedCount = baseCells.length - remaining.length;
+
+    updateSelectedLocation({
+      cells: remaining,
+      ...box,
+    });
+    setSelectedTiles([]);
+    setTileDragMode(null);
+    if (removedCount > 0) {
+      showNotice(`${removedCount} vak(ken) verwijderd uit "${selectedLocation.name}".`);
+    }
   };
 
   const handleTileAction = (x: number, y: number) => {
@@ -431,10 +583,22 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
     if (movingLocId) {
       const nextLocs = caseFile.locations.map((loc) => {
         if (loc.id !== movingLocId) return loc;
+        const targetX = Math.min(x, Math.max(0, mapCols - loc.width));
+        const targetY = Math.min(y, Math.max(0, mapRows - loc.height));
+        const dx = targetX - loc.x;
+        const dy = targetY - loc.y;
+        if (Array.isArray(loc.cells) && loc.cells.length > 0) {
+          const shifted = loc.cells.map((c) => ({ x: c.x + dx, y: c.y + dy }));
+          return {
+            ...loc,
+            cells: shifted,
+            ...computeBoundingBox(shifted),
+          };
+        }
         return {
           ...loc,
-          x: Math.min(x, Math.max(0, mapCols - loc.width)),
-          y: Math.min(y, Math.max(0, mapRows - loc.height)),
+          x: targetX,
+          y: targetY,
         };
       });
       onUpdateCase({ ...caseFile, locations: nextLocs });
@@ -678,8 +842,8 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
                 onClick={() => {
                   setPaintTerrain(paintTerrain === t ? null : t);
                   setPlaceMode(null);
-                  setZoneDrawStart(null);
-                  setZoneDrawCurrent(null);
+                  setSelectedTiles([]);
+                  setTileDragMode(null);
                   setMovingLocId(null);
                 }}
                 className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors whitespace-nowrap shrink-0 ${
@@ -699,8 +863,8 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
               onClick={() => {
                 setPlaceMode(placeMode === 'building' ? null : 'building');
                 setPaintTerrain(null);
-                setZoneDrawStart(null);
-                setZoneDrawCurrent(null);
+                setSelectedTiles([]);
+                setTileDragMode(null);
                 setMovingLocId(null);
               }}
               className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 ${
@@ -718,10 +882,13 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
             <button
               type="button"
               onClick={() => {
-                setPlaceMode(placeMode === 'zone' ? null : 'zone');
+                const next = placeMode === 'zone' ? null : 'zone';
+                setPlaceMode(next);
                 setPaintTerrain(null);
-                setZoneDrawStart(null);
-                setZoneDrawCurrent(null);
+                if (!next) {
+                  setSelectedTiles([]);
+                  setTileDragMode(null);
+                }
                 setMovingLocId(null);
               }}
               className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg border transition-colors whitespace-nowrap shrink-0 ${
@@ -730,11 +897,11 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
                   : 'border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20'
               }`}
             >
-              <CircleDashed className="w-3.5 h-3.5" />
+              <Grid2X2 className="w-3.5 h-3.5" />
               <span>
                 {placeMode === 'zone'
-                  ? 'Sleep over gebied...'
-                  : 'Gebied / POV omcirkelen'}
+                  ? 'Vakken selecteren actief'
+                  : 'Gebied (POV) vakken'}
               </span>
             </button>
 
@@ -875,19 +1042,92 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
                   ? placeMode === 'building'
                     ? 'Klik op een vakje om een nieuw gebouw te plaatsen.'
                     : placeMode === 'zone'
-                    ? 'Sleep over de kaart om een gebied (POV) te omcirkelen, zoals een park of vliegveld (of klik voor 4×3).'
+                    ? 'Klik of sleep over de kaart om losse vakken te selecteren en toe te voegen aan een POV-gebied.'
                     : movingLocId
                     ? 'Klik op de nieuwe positie voor de geselecteerde locatie.'
                     : paintTerrain
                     ? `Actieve penseel: ${TERRAIN_META[paintTerrain].label} (klik of sleep over tegels).`
-                    : 'Teken terrein, voeg gebouwen toe of omcirkel gebieden (POV) op de kaart.'
-                  : 'Klik op een gebouw of omcirkeld gebied (POV) voor details, bewoners en gevonden sporen.'}
+                    : 'Teken terrein, voeg gebouwen toe of selecteer vakken voor gebieden (POV).'
+                  : 'Klik op een gebouw of gebied (POV) voor details, bewoners en gevonden sporen.'}
               </p>
             </div>
             <span className="text-xs font-mono text-slate-500 dark:text-slate-400">
               {mapCols}×{mapRows} sectorgrid
             </span>
           </div>
+
+          {editable && placeMode === 'zone' && (
+            <div className="mb-3 p-3 rounded-lg border border-sky-500/40 bg-sky-500/10 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs">
+                <Grid2X2 className="w-4 h-4 text-sky-500 shrink-0" />
+                <span className="font-semibold text-slate-900 dark:text-white">
+                  {selectedTiles.length}{' '}
+                  {selectedTiles.length === 1 ? 'vak' : 'vakken'} geselecteerd
+                </span>
+                <span className="text-slate-600 dark:text-slate-300 hidden sm:inline">
+                  — Klik of sleep over vakken op de kaart om ze te (de)selecteren.
+                </span>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1.5">
+                {selectedLocation && selectedKind === 'zone' && (
+                  <>
+                    <button
+                      type="button"
+                      disabled={selectedTiles.length === 0}
+                      onClick={addSelectedTilesToZone}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white transition-colors"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Toevoegen aan {selectedLocation.code}</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={selectedTiles.length === 0}
+                      onClick={removeSelectedTilesFromZone}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-lg border border-rose-500/40 text-rose-700 dark:text-rose-300 hover:bg-rose-500/15 disabled:opacity-40 transition-colors"
+                    >
+                      <Minus className="w-3.5 h-3.5" />
+                      <span>Uit {selectedLocation.code} halen</span>
+                    </button>
+                  </>
+                )}
+
+                <button
+                  type="button"
+                  disabled={selectedTiles.length === 0}
+                  onClick={createNewZoneFromSelectedTiles}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-sky-600 hover:bg-sky-500 disabled:opacity-40 text-white transition-colors"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Nieuw gebied maken</span>
+                </button>
+
+                {selectedTiles.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedTiles([])}
+                    className="px-2.5 py-1.5 text-xs font-medium rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-slate-800 transition-colors"
+                  >
+                    Wis selectie
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPlaceMode(null);
+                    setSelectedTiles([]);
+                    setTileDragMode(null);
+                  }}
+                  aria-label="Sluit vakken selecteren"
+                  className="p-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200/60 dark:hover:bg-slate-800"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
 
           <div
             className="relative select-none rounded-lg overflow-hidden border border-slate-300 dark:border-slate-700"
@@ -905,16 +1145,12 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
             }}
             onMouseLeave={() => {
               setIsPainting(false);
+              setTileDragMode(null);
               setHoveredTile(null);
-              if (placeMode === 'zone' && zoneDrawStart) {
-                commitZoneDraw();
-              }
             }}
             onMouseUp={() => {
               setIsPainting(false);
-              if (placeMode === 'zone' && zoneDrawStart) {
-                commitZoneDraw();
-              }
+              setTileDragMode(null);
             }}
           >
             {/* Terrain Layer */}
@@ -936,8 +1172,10 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
                     onMouseDown={() => {
                       if (!editable) return;
                       if (placeMode === 'zone') {
-                        setZoneDrawStart({ x, y });
-                        setZoneDrawCurrent({ x, y });
+                        const alreadySelected = selectedTileKeys.has(tileKey(x, y));
+                        const mode: 'add' | 'remove' = alreadySelected ? 'remove' : 'add';
+                        setTileDragMode(mode);
+                        toggleSelectionTile(x, y, mode);
                         return;
                       }
                       setIsPainting(true);
@@ -945,8 +1183,8 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
                     }}
                     onMouseEnter={() => {
                       if (!editable) return;
-                      if (placeMode === 'zone' && zoneDrawStart) {
-                        setZoneDrawCurrent({ x, y });
+                      if (placeMode === 'zone' && tileDragMode) {
+                        toggleSelectionTile(x, y, tileDragMode);
                         return;
                       }
                       if (isPainting && paintTerrain) {
@@ -963,7 +1201,7 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
               })}
             </div>
 
-            {/* Layer 2: Circled Areas / POV Zones (behind buildings) */}
+            {/* Layer 2: Multi-tile POV Zones (behind buildings) */}
             <div
               className="absolute inset-0 pointer-events-none grid z-[5]"
               style={{
@@ -978,53 +1216,105 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
                 const colorMeta =
                   ZONE_COLOR_META[zone.zoneColor ?? 'emerald'] ??
                   ZONE_COLOR_META.emerald;
+                const cells = getLocationCells(zone, mapCols, mapRows);
+                const cellSet = new Set(cells.map((c) => tileKey(c.x, c.y)));
+                const sortedCells = [...cells].sort((a, b) =>
+                  a.y !== b.y ? a.y - b.y : a.x - b.x
+                );
+                const anchorCell = sortedCells[0];
+
                 return (
-                  <button
-                    key={zone.id}
-                    type="button"
-                    onClick={() => {
-                      if (isInteractiveOverlayDisabled) return;
-                      setSelectedLocId(zone.id);
-                    }}
-                    style={{
-                      gridColumn: `${zone.x + 1} / span ${zone.width}`,
-                      gridRow: `${zone.y + 1} / span ${zone.height}`,
-                    }}
-                    className={`${
-                      isInteractiveOverlayDisabled
-                        ? 'pointer-events-none'
-                        : 'pointer-events-auto'
-                    } relative m-1 rounded-[46%] border-2 border-dashed flex items-start justify-center p-1.5 transition-all ${
-                      colorMeta.fillAndBorder
-                    } ${isSelected ? `${colorMeta.selectedRing} z-[8]` : 'hover:brightness-110'} ${
-                      isDimmed ? 'opacity-20' : 'opacity-100'
-                    }`}
-                  >
-                    <span
-                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-semibold shadow-sm max-w-full truncate ${colorMeta.badge}`}
-                    >
-                      <CatIcon className="w-3 h-3 shrink-0" />
-                      <span className="font-mono shrink-0">{zone.code}</span>
-                      <span className="truncate">{zone.name}</span>
-                    </span>
-                  </button>
+                  <React.Fragment key={zone.id}>
+                    {cells.map((cell) => {
+                      const hasTop = cellSet.has(tileKey(cell.x, cell.y - 1));
+                      const hasRight = cellSet.has(tileKey(cell.x + 1, cell.y));
+                      const hasBottom = cellSet.has(tileKey(cell.x, cell.y + 1));
+                      const hasLeft = cellSet.has(tileKey(cell.x - 1, cell.y));
+
+                      const borderSides = [
+                        !hasTop ? 'border-t-2' : '',
+                        !hasRight ? 'border-r-2' : '',
+                        !hasBottom ? 'border-b-2' : '',
+                        !hasLeft ? 'border-l-2' : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ');
+
+                      const outerCorners = [
+                        !hasTop && !hasLeft ? 'rounded-tl-xl' : '',
+                        !hasTop && !hasRight ? 'rounded-tr-xl' : '',
+                        !hasBottom && !hasRight ? 'rounded-br-xl' : '',
+                        !hasBottom && !hasLeft ? 'rounded-bl-xl' : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ');
+
+                      return (
+                        <button
+                          key={`${zone.id}-${cell.x}-${cell.y}`}
+                          type="button"
+                          aria-label={`${zone.name} (${cell.x},${cell.y})`}
+                          onClick={() => {
+                            if (isInteractiveOverlayDisabled) return;
+                            setSelectedLocId(zone.id);
+                          }}
+                          style={{
+                            gridColumn: `${cell.x + 1} / span 1`,
+                            gridRow: `${cell.y + 1} / span 1`,
+                          }}
+                          className={`${
+                            isInteractiveOverlayDisabled
+                              ? 'pointer-events-none'
+                              : 'pointer-events-auto'
+                          } border-dashed transition-colors ${borderSides} ${outerCorners} ${
+                            isSelected
+                              ? `${colorMeta.selectedBorderColor} ${colorMeta.selectedBgColor} z-[8]`
+                              : `${colorMeta.borderColor} ${colorMeta.bgColor}`
+                          } ${isDimmed ? 'opacity-20' : 'opacity-100'}`}
+                        />
+                      );
+                    })}
+
+                    {anchorCell && (
+                      <div
+                        style={{
+                          gridColumn: `${anchorCell.x + 1} / span ${Math.max(
+                            1,
+                            Math.min(mapCols - anchorCell.x, Math.max(2, zone.width))
+                          )}`,
+                          gridRow: `${anchorCell.y + 1} / span 1`,
+                        }}
+                        className={`pointer-events-none z-[9] flex items-start justify-start p-1 ${
+                          isDimmed ? 'opacity-25' : 'opacity-100'
+                        }`}
+                      >
+                        <span
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-semibold shadow-sm whitespace-nowrap ${colorMeta.badge}`}
+                        >
+                          <CatIcon className="w-3 h-3 shrink-0" />
+                          <span className="font-mono shrink-0">{zone.code}</span>
+                          <span className="truncate max-w-[160px]">{zone.name}</span>
+                        </span>
+                      </div>
+                    )}
+                  </React.Fragment>
                 );
               })}
 
-              {/* Live preview while dragging a new circled POV zone */}
-              {placeMode === 'zone' && zonePreviewRect && (
-                <div
-                  style={{
-                    gridColumn: `${zonePreviewRect.x + 1} / span ${zonePreviewRect.width}`,
-                    gridRow: `${zonePreviewRect.y + 1} / span ${zonePreviewRect.height}`,
-                  }}
-                  className="pointer-events-none m-1 rounded-[46%] border-2 border-dashed border-sky-400 bg-sky-500/20 flex items-center justify-center z-20"
-                >
-                  <span className="px-2 py-0.5 rounded bg-sky-600 text-white text-[10px] font-mono font-semibold">
-                    POV {zonePreviewRect.width}×{zonePreviewRect.height}
-                  </span>
-                </div>
-              )}
+              {/* Live preview of individually selected tiles for POV creation/editing */}
+              {placeMode === 'zone' &&
+                selectedTiles.map((cell) => (
+                  <div
+                    key={`sel-${cell.x}-${cell.y}`}
+                    style={{
+                      gridColumn: `${cell.x + 1} / span 1`,
+                      gridRow: `${cell.y + 1} / span 1`,
+                    }}
+                    className="pointer-events-none m-0.5 rounded-md border-2 border-sky-400 bg-sky-500/35 z-[15] flex items-center justify-center shadow-xs"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-white shadow" />
+                  </div>
+                ))}
             </div>
 
             {/* Layer 3: Solid Buildings Overlay (above circled POV zones) */}
@@ -1092,7 +1382,7 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
             {hoveredTile &&
               hoveredLocations.length > 0 &&
               !isPainting &&
-              !zoneDrawStart && (
+              !tileDragMode && (
                 <div
                   role="tooltip"
                   style={{
@@ -1212,13 +1502,14 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
                 </div>
               </div>
 
-              {/* Type switcher: Building vs Circled POV Zone */}
+              {/* Type switcher: Building vs Tile-Based POV Zone */}
               <div className="grid grid-cols-2 gap-1.5 p-1 rounded-lg bg-slate-100 dark:bg-[#090D12] border border-slate-200 dark:border-slate-800">
                 <button
                   type="button"
                   onClick={() =>
                     updateSelectedLocation({
                       kind: 'building',
+                      cells: undefined,
                     })
                   }
                   className={`inline-flex items-center justify-center gap-1.5 py-1.5 text-xs font-medium rounded-md transition-colors ${
@@ -1232,12 +1523,15 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() =>
+                  onClick={() => {
+                    const cells = getLocationCells(selectedLocation, mapCols, mapRows);
                     updateSelectedLocation({
                       kind: 'zone',
                       zoneColor: selectedLocation.zoneColor ?? 'emerald',
-                    })
-                  }
+                      cells,
+                      ...computeBoundingBox(cells),
+                    });
+                  }}
                   className={`inline-flex items-center justify-center gap-1.5 py-1.5 text-xs font-medium rounded-md transition-colors ${
                     selectedKind === 'zone'
                       ? 'bg-emerald-600 text-white shadow-sm'
@@ -1399,51 +1693,42 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
               )}
 
               {selectedKind === 'zone' && (
-                <div className="grid grid-cols-2 gap-3 p-3 rounded-lg bg-slate-50 dark:bg-[#090D12] border border-slate-200 dark:border-slate-800">
-                  <div>
-                    <label className="block text-[11px] font-medium text-slate-600 dark:text-slate-400 mb-1">
-                      Breedte (tegels)
-                    </label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={mapCols}
-                      value={selectedLocation.width}
-                      onChange={(e) => {
-                        const w = Math.max(
-                          1,
-                          Math.min(mapCols, Number(e.target.value) || 1)
-                        );
-                        updateSelectedLocation({
-                          width: w,
-                          x: Math.min(selectedLocation.x, Math.max(0, mapCols - w)),
-                        });
-                      }}
-                      className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0F151D]"
-                    />
+                <div className="p-3 rounded-lg bg-slate-50 dark:bg-[#090D12] border border-slate-200 dark:border-slate-800 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <span className="font-medium text-slate-700 dark:text-slate-300">
+                      Vakken in dit gebied
+                    </span>
+                    <span className="font-mono font-semibold text-emerald-600 dark:text-emerald-400">
+                      {getLocationCells(selectedLocation, mapCols, mapRows).length} tegels
+                    </span>
                   </div>
-                  <div>
-                    <label className="block text-[11px] font-medium text-slate-600 dark:text-slate-400 mb-1">
-                      Hoogte (tegels)
-                    </label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={mapRows}
-                      value={selectedLocation.height}
-                      onChange={(e) => {
-                        const h = Math.max(
-                          1,
-                          Math.min(mapRows, Number(e.target.value) || 1)
-                        );
-                        updateSelectedLocation({
-                          height: h,
-                          y: Math.min(selectedLocation.y, Math.max(0, mapRows - h)),
-                        });
-                      }}
-                      className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0F151D]"
-                    />
-                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Selecteer losse vakken op de kaart en voeg ze toe aan of verwijder ze uit dit POV-gebied.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPlaceMode(placeMode === 'zone' ? null : 'zone');
+                      setPaintTerrain(null);
+                      setMovingLocId(null);
+                      if (placeMode === 'zone') {
+                        setSelectedTiles([]);
+                        setTileDragMode(null);
+                      }
+                    }}
+                    className={`w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg transition-colors ${
+                      placeMode === 'zone'
+                        ? 'bg-sky-600 text-white'
+                        : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                    }`}
+                  >
+                    <Grid2X2 className="w-3.5 h-3.5" />
+                    <span>
+                      {placeMode === 'zone'
+                        ? 'Selectie actief — kies vakken op de kaart'
+                        : 'Vakken selecteren voor dit gebied'}
+                    </span>
+                  </button>
                 </div>
               )}
 
