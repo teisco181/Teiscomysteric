@@ -148,3 +148,16 @@ export interface PlayerNote {
   customTraces: CustomTrace[];
   updatedAt: string;
 }
+
+export interface MapTemplate {
+  id: string;
+  name: string;
+  townName: string;
+  mapCols: number;
+  mapRows: number;
+  terrain: TerrainType[];
+  locations: MapLocation[];
+  createdAt: string;
+  updatedAt: string;
+}
+

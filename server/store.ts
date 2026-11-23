@@ -4,6 +4,7 @@ import path from 'node:path';
 import type {
   AuthUser,
   CaseFile,
+  MapTemplate,
   PlayerNote,
   TerrainType,
   UserRole,
@@ -25,6 +26,7 @@ interface DatabaseSchema {
   users: StoredUser[];
   cases: CaseFile[];
   notes: PlayerNote[];
+  mapTemplates?: MapTemplate[];
 }
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
@@ -36,16 +38,32 @@ const SESSION_SECRET =
     ? process.env.SESSION_SECRET
     : crypto.randomBytes(32).toString('hex');
 
+function createStarterMapTemplate(starter: CaseFile): MapTemplate {
+  return {
+    id: 'map-kraaiendonk-basis',
+    name: 'Kraaiendonk (Basisdorp)',
+    townName: starter.townName,
+    mapCols: starter.mapCols,
+    mapRows: starter.mapRows,
+    terrain: [...starter.terrain],
+    locations: starter.locations.map((loc) => ({ ...loc })),
+    createdAt: starter.createdAt,
+    updatedAt: starter.updatedAt,
+  };
+}
+
 function ensureDb(): DatabaseSchema {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
   if (!fs.existsSync(DB_PATH)) {
+    const starter = createStarterCase();
     const initial: DatabaseSchema = {
       adminClaimed: false,
       users: [],
-      cases: [createStarterCase()],
+      cases: [starter],
       notes: [],
+      mapTemplates: [createStarterMapTemplate(starter)],
     };
     writeDbAtomic(initial);
     return initial;
@@ -58,16 +76,21 @@ function ensureDb(): DatabaseSchema {
     }
     if (!Array.isArray(parsed.users)) parsed.users = [];
     if (!Array.isArray(parsed.notes)) parsed.notes = [];
+    if (!Array.isArray(parsed.mapTemplates) || parsed.mapTemplates.length === 0) {
+      parsed.mapTemplates = [createStarterMapTemplate(parsed.cases[0])];
+    }
     if (typeof parsed.adminClaimed !== 'boolean') {
       parsed.adminClaimed = parsed.users.some((u) => u.role === 'admin');
     }
     return parsed;
   } catch {
+    const starter = createStarterCase();
     const fallback: DatabaseSchema = {
       adminClaimed: false,
       users: [],
-      cases: [createStarterCase()],
+      cases: [starter],
       notes: [],
+      mapTemplates: [createStarterMapTemplate(starter)],
     };
     writeDbAtomic(fallback);
     return fallback;
@@ -365,6 +388,27 @@ export function getCaseForUser(
   return sanitizeCaseForPlayer(found);
 }
 
+function normalizeRedeemInput(rawCode: string): string[] {
+  const cleaned = rawCode
+    .replace(/[\u2010-\u2015\u2212]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toUpperCase();
+
+  const strippedPrefix = cleaned
+    .replace(/^(ONLINE\s+TOEGANGSCODE|TOEGANGSCODE|SPELCODE|DOSSIERNUMMER|DOSSIERCODE|CODE)\s*:\s*/i, '')
+    .trim();
+
+  const candidates = new Set<string>();
+  if (cleaned) candidates.add(cleaned);
+  if (strippedPrefix) {
+    candidates.add(strippedPrefix);
+    const firstPart = strippedPrefix.split(/\s+[—\-–·]\s+|\s+/)[0]?.trim();
+    if (firstPart) candidates.add(firstPart);
+  }
+  return Array.from(candidates);
+}
+
 export function redeemCaseCode(
   userId: string,
   rawCode: string
@@ -372,23 +416,44 @@ export function redeemCaseCode(
   | { ok: true; caseFile: CaseFile; alreadyUnlocked: boolean }
   | { ok: false; error: string; status: number } {
   const db = getDb();
-  const normalizedCode = rawCode.trim().toUpperCase();
-  if (!normalizedCode) {
+  const candidates = normalizeRedeemInput(rawCode);
+  if (candidates.length === 0) {
     return { ok: false, error: 'Voer een geldige dossiercode in.', status: 400 };
   }
 
-  const found = db.cases.find((c) => {
-    if (c.status !== 'published') return false;
-    const primary = (c.joinCode || c.code).trim().toUpperCase();
-    const fallback = c.code.trim().toUpperCase();
-    return primary === normalizedCode || fallback === normalizedCode;
-  });
+  const matchesCase = (c: CaseFile) => {
+    const keys = [
+      (c.joinCode || '').replace(/[\u2010-\u2015\u2212]/g, '-').trim().toUpperCase(),
+      c.code.replace(/[\u2010-\u2015\u2212]/g, '-').trim().toUpperCase(),
+      c.id.trim().toUpperCase(),
+    ].filter(Boolean);
+    return candidates.some((cand) => keys.includes(cand));
+  };
+
+  const found = db.cases.find((c) => c.status === 'published' && matchesCase(c));
 
   if (!found) {
+    const draftMatch = db.cases.find((c) => c.status !== 'published' && matchesCase(c));
+    if (draftMatch) {
+      return {
+        ok: false,
+        error:
+          'Dit dossier staat nog op Concept (verborgen). De maker moet het dossier eerst publiceren en opslaan.',
+        status: 403,
+      };
+    }
     return {
       ok: false,
       error: 'Geen actief mysterie gevonden met deze code.',
       status: 404,
+    };
+  }
+
+  if (userId === 'usr-env-admin') {
+    return {
+      ok: true,
+      caseFile: sanitizeCaseForPlayer(found),
+      alreadyUnlocked: true,
     };
   }
 
@@ -540,3 +605,95 @@ export function savePlayerNote(
   persistDb();
   return next;
 }
+
+export function listMapTemplates(): MapTemplate[] {
+  const db = getDb();
+  return db.mapTemplates ?? [];
+}
+
+export function createMapTemplate(input: Partial<MapTemplate>): MapTemplate {
+  const db = getDb();
+  if (!Array.isArray(db.mapTemplates)) {
+    db.mapTemplates = [];
+  }
+  const now = new Date().toISOString();
+  const mapCols =
+    typeof input.mapCols === 'number'
+      ? Math.max(8, Math.min(48, Math.round(input.mapCols)))
+      : 24;
+  const mapRows =
+    typeof input.mapRows === 'number'
+      ? Math.max(6, Math.min(36, Math.round(input.mapRows)))
+      : 14;
+  const terrain: TerrainType[] =
+    Array.isArray(input.terrain) && input.terrain.length === mapCols * mapRows
+      ? input.terrain
+      : new Array<TerrainType>(mapCols * mapRows).fill('grass');
+
+  const created: MapTemplate = {
+    id: `map-${crypto.randomUUID().slice(0, 8)}`,
+    name: (input.name ?? `Dorp ${db.mapTemplates.length + 1}`).trim().slice(0, 80) || 'Nieuwe Kaart',
+    townName: (input.townName ?? 'Nieuw Dorp').trim().slice(0, 80) || 'Nieuw Dorp',
+    mapCols,
+    mapRows,
+    terrain,
+    locations: Array.isArray(input.locations)
+      ? input.locations.map((l) => ({ ...l }))
+      : [],
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  db.mapTemplates.push(created);
+  persistDb();
+  return created;
+}
+
+export function updateMapTemplate(
+  mapId: string,
+  patch: Partial<MapTemplate>
+): MapTemplate | null {
+  const db = getDb();
+  if (!Array.isArray(db.mapTemplates)) return null;
+  const idx = db.mapTemplates.findIndex((m) => m.id === mapId);
+  if (idx === -1) return null;
+
+  const existing = db.mapTemplates[idx];
+  const mapCols =
+    typeof patch.mapCols === 'number'
+      ? Math.max(8, Math.min(48, Math.round(patch.mapCols)))
+      : existing.mapCols;
+  const mapRows =
+    typeof patch.mapRows === 'number'
+      ? Math.max(6, Math.min(36, Math.round(patch.mapRows)))
+      : existing.mapRows;
+
+  const updated: MapTemplate = {
+    ...existing,
+    ...patch,
+    id: existing.id,
+    name: typeof patch.name === 'string' && patch.name.trim() ? patch.name.trim().slice(0, 80) : existing.name,
+    townName: typeof patch.townName === 'string' && patch.townName.trim() ? patch.townName.trim().slice(0, 80) : existing.townName,
+    mapCols,
+    mapRows,
+    terrain: Array.isArray(patch.terrain) ? patch.terrain : existing.terrain,
+    locations: Array.isArray(patch.locations) ? patch.locations.map((l) => ({ ...l })) : existing.locations,
+    createdAt: existing.createdAt,
+    updatedAt: new Date().toISOString(),
+  };
+
+  db.mapTemplates[idx] = updated;
+  persistDb();
+  return updated;
+}
+
+export function deleteMapTemplate(mapId: string): boolean {
+  const db = getDb();
+  if (!Array.isArray(db.mapTemplates)) return false;
+  const before = db.mapTemplates.length;
+  db.mapTemplates = db.mapTemplates.filter((m) => m.id !== mapId);
+  if (db.mapTemplates.length === before) return false;
+  persistDb();
+  return true;
+}
+

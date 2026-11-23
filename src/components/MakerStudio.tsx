@@ -1,5 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import {
+  Check,
+  Copy,
   Eraser,
   Eye,
   EyeOff,
@@ -26,6 +28,7 @@ import {
   type EvidenceItem,
   type EvidenceStamp,
   type FingerprintPattern,
+  type MapTemplate,
   type Person,
   type PersonStatus,
 } from '../types.ts';
@@ -35,6 +38,7 @@ import {
   createSmudgedTrace,
   generateFingerprintPreset,
 } from '../utils/fingerprint.ts';
+import { resolveAssetUrl } from '../utils/assetUrl.ts';
 import { FingerprintGrid } from './FingerprintGrid.tsx';
 import { PersonAvatar } from './PersonAvatar.tsx';
 import { TownMapView } from './TownMapView.tsx';
@@ -53,31 +57,36 @@ interface MakerStudioProps {
   activeCase: CaseFile;
   onSelectCase: (caseId: string) => void;
   onUpdateDraft: (next: CaseFile) => void;
-  onSaveCase: () => Promise<void>;
+  onSaveCase: (overrideCase?: CaseFile) => Promise<void>;
   onCreateCase: () => Promise<void>;
   onDeleteCase: (caseId: string) => Promise<void>;
   onOpenPrintDossier: () => void;
   isDirty: boolean;
   isSaving: boolean;
   saveMessage: string | null;
+  mapTemplates: MapTemplate[];
+  onSaveNewMapTemplate: (name: string) => Promise<void>;
+  onUpdateMapTemplate: (mapId: string) => Promise<void>;
+  onApplyMapTemplate: (template: MapTemplate) => void;
+  onDeleteMapTemplate: (mapId: string) => Promise<void>;
 }
 
 const PRESET_PORTRAITS = [
   {
     label: 'Portret 1 (Havenmeester)',
-    url: '/src/assets/images/suspect_hendrik_vos_1795419420108.jpg',
+    url: './src/assets/images/suspect_hendrik_vos_1795419420108.jpg',
   },
   {
     label: 'Portret 2 (Apotheker)',
-    url: '/src/assets/images/suspect_claire_vermeer_1795419419847.jpg',
+    url: './src/assets/images/suspect_claire_vermeer_1795419419847.jpg',
   },
   {
     label: 'Portret 3 (Klokkenmaker)',
-    url: '/src/assets/images/suspect_bram_koster_1795419420117.jpg',
+    url: './src/assets/images/suspect_bram_koster_1795419420117.jpg',
   },
   {
     label: 'Portret 4 (Journaliste)',
-    url: '/src/assets/images/suspect_lotje_bakker_1795419420110.jpg',
+    url: './src/assets/images/suspect_lotje_bakker_1795419420110.jpg',
   },
 ];
 
@@ -95,7 +104,13 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
   isDirty,
   isSaving,
   saveMessage,
+  mapTemplates,
+  onSaveNewMapTemplate,
+  onUpdateMapTemplate,
+  onApplyMapTemplate,
+  onDeleteMapTemplate,
 }) => {
+  const [copiedCode, setCopiedCode] = useState(false);
   const [selectedPersonId, setSelectedPersonId] = useState<string>(
     activeCase.persons[0]?.id ?? ''
   );
@@ -363,7 +378,7 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
 
           <button
             type="button"
-            onClick={onSaveCase}
+            onClick={() => onSaveCase()}
             disabled={isSaving}
             className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white transition-colors whitespace-nowrap shrink-0"
           >
@@ -377,7 +392,7 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
       {activeTab === 'dossier' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           <div className="lg:col-span-8 p-6 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0F151D] space-y-5">
-            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-4">
               <div>
                 <h2 className="text-lg font-bold text-slate-900 dark:text-white">
                   01. Dossierconfiguratie &amp; Briefing
@@ -388,12 +403,15 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
               </div>
               <button
                 type="button"
-                onClick={() =>
-                  onUpdateDraft({
+                disabled={isSaving}
+                onClick={async () => {
+                  const nextCase: CaseFile = {
                     ...activeCase,
                     status: activeCase.status === 'published' ? 'draft' : 'published',
-                  })
-                }
+                  };
+                  onUpdateDraft(nextCase);
+                  await onSaveCase(nextCase);
+                }}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
                   activeCase.status === 'published'
                     ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-700 dark:text-emerald-300'
@@ -408,11 +426,19 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
                 ) : (
                   <>
                     <EyeOff className="w-3.5 h-3.5" />
-                    <span>Concept (verborgen)</span>
+                    <span>Concept (klik om te publiceren)</span>
                   </>
                 )}
               </button>
             </div>
+
+            {activeCase.status !== 'published' && (
+              <div className="p-3.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-xs text-amber-800 dark:text-amber-200">
+                Dit dossier staat op <strong>Concept</strong>. Spelers kunnen de toegangscode pas
+                gebruiken nadat je rechtsboven op <strong>Concept (klik om te publiceren)</strong>{' '}
+                hebt geklikt.
+              </div>
+            )}
 
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
               <div>
@@ -430,18 +456,37 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
                 <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5">
                   Speler toegangscode
                 </label>
-                <input
-                  type="text"
-                  value={activeCase.joinCode ?? activeCase.code}
-                  onChange={(e) =>
-                    onUpdateDraft({
-                      ...activeCase,
-                      joinCode: e.target.value.toUpperCase(),
-                    })
-                  }
-                  placeholder="bijv. ZAAK-047"
-                  className="w-full px-3 py-2 text-sm font-mono uppercase rounded-lg border border-emerald-500/40 dark:border-emerald-500/40 bg-slate-50 dark:bg-[#090D12]"
-                />
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={activeCase.joinCode ?? activeCase.code}
+                    onChange={(e) =>
+                      onUpdateDraft({
+                        ...activeCase,
+                        joinCode: e.target.value.toUpperCase(),
+                      })
+                    }
+                    placeholder="bijv. ZAAK-047"
+                    className="w-full px-3 py-2 text-sm font-mono uppercase rounded-lg border border-emerald-500/40 dark:border-emerald-500/40 bg-slate-50 dark:bg-[#090D12]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const val = (activeCase.joinCode || activeCase.code).trim();
+                      navigator.clipboard?.writeText(val).catch(() => {});
+                      setCopiedCode(true);
+                      setTimeout(() => setCopiedCode(false), 2000);
+                    }}
+                    aria-label="Kopieer toegangscode"
+                    className="p-2 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0"
+                  >
+                    {copiedCode ? (
+                      <Check className="w-4 h-4 text-emerald-500" />
+                    ) : (
+                      <Copy className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
               </div>
               <div className="sm:col-span-2">
                 <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5">
@@ -621,6 +666,11 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
           caseFile={activeCase}
           editable
           onUpdateCase={onUpdateDraft}
+          mapTemplates={mapTemplates}
+          onSaveNewMapTemplate={onSaveNewMapTemplate}
+          onUpdateMapTemplate={onUpdateMapTemplate}
+          onApplyMapTemplate={onApplyMapTemplate}
+          onDeleteMapTemplate={onDeleteMapTemplate}
         />
       )}
 
@@ -1530,7 +1580,7 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
                       >
                         {selectedEvidence.imageUrl ? (
                           <img
-                            src={selectedEvidence.imageUrl}
+                            src={resolveAssetUrl(selectedEvidence.imageUrl)}
                             alt={selectedEvidence.title}
                             referrerPolicy="no-referrer"
                             className="absolute inset-0 w-full h-full object-cover opacity-55 pointer-events-none"

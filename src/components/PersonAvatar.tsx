@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { User } from 'lucide-react';
+import { resolveAssetUrl } from '../utils/assetUrl.ts';
 
 interface PersonAvatarProps {
   src: string;
@@ -15,6 +16,7 @@ export const PersonAvatar: React.FC<PersonAvatarProps> = ({
   className = '',
 }) => {
   const [failed, setFailed] = useState(false);
+  const resolvedSrc = resolveAssetUrl(src);
 
   const dims =
     size === 'sm'
@@ -30,7 +32,7 @@ export const PersonAvatar: React.FC<PersonAvatarProps> = ({
     .map((p) => p[0]?.toUpperCase() ?? '')
     .join('');
 
-  if (!src || failed) {
+  if (!resolvedSrc || failed) {
     return (
       <div
         className={`${dims} rounded-lg border border-slate-300 dark:border-slate-700 bg-gradient-to-br from-slate-200 to-slate-300 dark:from-slate-800 dark:to-slate-900 flex items-center justify-center font-mono font-semibold text-slate-600 dark:text-slate-300 shrink-0 ${className}`}
@@ -43,7 +45,7 @@ export const PersonAvatar: React.FC<PersonAvatarProps> = ({
 
   return (
     <img
-      src={src}
+      src={resolvedSrc}
       alt={`Archieffoto van ${name}`}
       referrerPolicy="no-referrer"
       onError={() => setFailed(true)}

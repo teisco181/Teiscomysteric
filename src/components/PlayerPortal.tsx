@@ -31,6 +31,7 @@ import {
   compareFingerprints,
   createEmptyMatrix,
 } from '../utils/fingerprint.ts';
+import { resolveAssetUrl } from '../utils/assetUrl.ts';
 import { FingerprintGrid } from './FingerprintGrid.tsx';
 import { PersonAvatar } from './PersonAvatar.tsx';
 import { TownMapView } from './TownMapView.tsx';
@@ -532,7 +533,7 @@ export const PlayerPortal: React.FC<PlayerPortalProps> = ({
                   <div className="relative h-56 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-[#090D12] overflow-hidden forensic-grid-bg">
                     {selectedEvidence.imageUrl ? (
                       <img
-                        src={selectedEvidence.imageUrl}
+                        src={resolveAssetUrl(selectedEvidence.imageUrl)}
                         alt={selectedEvidence.title}
                         referrerPolicy="no-referrer"
                         className="absolute inset-0 w-full h-full object-cover opacity-60"

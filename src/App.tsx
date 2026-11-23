@@ -6,7 +6,13 @@ import { MakerStudio, type MakerTab } from './components/MakerStudio.tsx';
 import { PlayerCodeGate } from './components/PlayerCodeGate.tsx';
 import { PlayerPortal, type PlayerTab } from './components/PlayerPortal.tsx';
 import { PrintableDossierModal } from './components/PrintableDossierModal.tsx';
-import type { AuthStatus, AuthUser, CaseFile, PlayerNote } from './types.ts';
+import type {
+  AuthStatus,
+  AuthUser,
+  CaseFile,
+  MapTemplate,
+  PlayerNote,
+} from './types.ts';
 
 const EMPTY_NOTE = (caseId: string, userId: string): PlayerNote => ({
   caseId,
@@ -33,6 +39,7 @@ export default function App() {
   const [playerTab, setPlayerTab] = useState<PlayerTab>('overzicht');
 
   const [cases, setCases] = useState<CaseFile[]>([]);
+  const [mapTemplates, setMapTemplates] = useState<MapTemplate[]>([]);
   const [activeCaseId, setActiveCaseId] = useState<string>('');
   const [draftCase, setDraftCase] = useState<CaseFile | null>(null);
   const [isDirty, setIsDirty] = useState(false);
@@ -100,12 +107,19 @@ export default function App() {
     setToken(nextToken);
     setViewMode(user.role === 'admin' ? 'maker' : 'player');
     await loadCases(nextToken);
+    if (user.role === 'admin') {
+      api
+        .listMaps(nextToken)
+        .then((res) => setMapTemplates(res.maps))
+        .catch(() => {});
+    }
   };
 
   const handleLogout = () => {
     setAuthUser(null);
     setToken(null);
     setCases([]);
+    setMapTemplates([]);
     setDraftCase(null);
     setNote(null);
     setIsDirty(false);
@@ -145,12 +159,13 @@ export default function App() {
     setSaveMessage(null);
   };
 
-  const handleSaveCase = async () => {
-    if (!token || !draftCase) return;
+  const handleSaveCase = async (overrideCase?: CaseFile) => {
+    const target = overrideCase ?? draftCase;
+    if (!token || !target) return;
     setIsSavingCase(true);
     setSaveMessage(null);
     try {
-      const res = await api.updateCase(token, draftCase.id, draftCase);
+      const res = await api.updateCase(token, target.id, target);
       setCases((prev) =>
         prev.map((c) => (c.id === res.caseFile.id ? res.caseFile : c))
       );
@@ -171,11 +186,16 @@ export default function App() {
     if (!token) return;
     setIsSavingCase(true);
     try {
+      const firstMap = mapTemplates[0];
       const res = await api.createCase(token, {
         title: `Nieuw Mysterie ${cases.length + 1}`,
-        townName: 'Nieuw Dorp',
+        townName: firstMap?.townName ?? 'Nieuw Dorp',
         subtitle: 'Onopgeloste zaak',
-        status: 'draft',
+        status: 'published',
+        mapCols: firstMap?.mapCols ?? 24,
+        mapRows: firstMap?.mapRows ?? 14,
+        terrain: firstMap ? [...firstMap.terrain] : undefined,
+        locations: firstMap ? firstMap.locations.map((l) => ({ ...l })) : [],
       });
       setCases((prev) => [...prev, res.caseFile]);
       setActiveCaseId(res.caseFile.id);
@@ -196,6 +216,51 @@ export default function App() {
     setActiveCaseId(next?.id ?? '');
     setDraftCase(next);
     setIsDirty(false);
+  };
+
+  const handleSaveNewMapTemplate = async (name: string) => {
+    if (!token || !draftCase) return;
+    const res = await api.createMap(token, {
+      name,
+      townName: draftCase.townName,
+      mapCols: draftCase.mapCols,
+      mapRows: draftCase.mapRows,
+      terrain: [...draftCase.terrain],
+      locations: draftCase.locations.map((l) => ({ ...l })),
+    });
+    setMapTemplates((prev) => [...prev, res.mapTemplate]);
+  };
+
+  const handleUpdateMapTemplate = async (mapId: string) => {
+    if (!token || !draftCase) return;
+    const res = await api.updateMap(token, mapId, {
+      townName: draftCase.townName,
+      mapCols: draftCase.mapCols,
+      mapRows: draftCase.mapRows,
+      terrain: [...draftCase.terrain],
+      locations: draftCase.locations.map((l) => ({ ...l })),
+    });
+    setMapTemplates((prev) =>
+      prev.map((m) => (m.id === res.mapTemplate.id ? res.mapTemplate : m))
+    );
+  };
+
+  const handleApplyMapTemplate = (template: MapTemplate) => {
+    if (!draftCase) return;
+    handleUpdateDraft({
+      ...draftCase,
+      townName: template.townName,
+      mapCols: template.mapCols,
+      mapRows: template.mapRows,
+      terrain: [...template.terrain],
+      locations: template.locations.map((l) => ({ ...l })),
+    });
+  };
+
+  const handleDeleteMapTemplate = async (mapId: string) => {
+    if (!token) return;
+    await api.deleteMap(token, mapId);
+    setMapTemplates((prev) => prev.filter((m) => m.id !== mapId));
   };
 
   const handleSaveNote = async () => {
@@ -452,10 +517,20 @@ export default function App() {
             onSaveCase={handleSaveCase}
             onCreateCase={handleCreateCase}
             onDeleteCase={handleDeleteCase}
-            onOpenPrintDossier={() => setShowPrintModal(true)}
+            onOpenPrintDossier={async () => {
+              if (isDirty) {
+                await handleSaveCase();
+              }
+              setShowPrintModal(true);
+            }}
             isDirty={isDirty}
             isSaving={isSavingCase}
             saveMessage={saveMessage}
+            mapTemplates={mapTemplates}
+            onSaveNewMapTemplate={handleSaveNewMapTemplate}
+            onUpdateMapTemplate={handleUpdateMapTemplate}
+            onApplyMapTemplate={handleApplyMapTemplate}
+            onDeleteMapTemplate={handleDeleteMapTemplate}
           />
         ) : (
           <PlayerPortal

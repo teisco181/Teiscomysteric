@@ -1,7 +1,9 @@
+import { staticStore } from './staticStore.ts';
 import type {
   AuthStatus,
   AuthUser,
   CaseFile,
+  MapTemplate,
   PlayerNote,
 } from './types.ts';
 
@@ -11,6 +13,23 @@ class ApiError extends Error {
     super(message);
     this.status = status;
   }
+}
+
+let backendAvailablePromise: Promise<boolean> | null = null;
+
+async function hasBackend(): Promise<boolean> {
+  if (!backendAvailablePromise) {
+    backendAvailablePromise = (async () => {
+      try {
+        const res = await fetch('./api/auth/status');
+        const contentType = res.headers.get('content-type') ?? '';
+        return res.ok && contentType.includes('application/json');
+      } catch {
+        return false;
+      }
+    })();
+  }
+  return backendAvailablePromise;
 }
 
 async function request<T>(
@@ -26,7 +45,8 @@ async function request<T>(
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const res = await fetch(url, {
+  const normalizedUrl = url.startsWith('/api/') ? `.${url}` : url;
+  const res = await fetch(normalizedUrl, {
     ...options,
     headers,
   });
@@ -39,68 +59,192 @@ async function request<T>(
 }
 
 export const api = {
-  getAuthStatus: () => request<AuthStatus>('/api/auth/status'),
+  getAuthStatus: async (): Promise<AuthStatus> => {
+    if (await hasBackend()) {
+      return request<AuthStatus>('/api/auth/status');
+    }
+    return staticStore.getAuthStatus();
+  },
 
-  claimAdmin: (username: string, password: string) =>
-    request<{ user: AuthUser; token: string }>('/api/auth/claim-admin', {
-      method: 'POST',
-      body: JSON.stringify({ username, password }),
-    }),
+  claimAdmin: async (
+    username: string,
+    password: string
+  ): Promise<{ user: AuthUser; token: string }> => {
+    if (await hasBackend()) {
+      return request<{ user: AuthUser; token: string }>('/api/auth/claim-admin', {
+        method: 'POST',
+        body: JSON.stringify({ username, password }),
+      });
+    }
+    return staticStore.claimAdmin(username, password);
+  },
 
-  register: (username: string, password: string) =>
-    request<{ user: AuthUser; token: string }>('/api/auth/register', {
-      method: 'POST',
-      body: JSON.stringify({ username, password }),
-    }),
+  register: async (
+    username: string,
+    password: string
+  ): Promise<{ user: AuthUser; token: string }> => {
+    if (await hasBackend()) {
+      return request<{ user: AuthUser; token: string }>('/api/auth/register', {
+        method: 'POST',
+        body: JSON.stringify({ username, password }),
+      });
+    }
+    return staticStore.register(username, password);
+  },
 
-  login: (username: string, password: string) =>
-    request<{ user: AuthUser; token: string }>('/api/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ username, password }),
-    }),
+  login: async (
+    username: string,
+    password: string
+  ): Promise<{ user: AuthUser; token: string }> => {
+    if (await hasBackend()) {
+      return request<{ user: AuthUser; token: string }>('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ username, password }),
+      });
+    }
+    return staticStore.login(username, password);
+  },
 
-  listCases: (token: string) =>
-    request<{ cases: CaseFile[] }>('/api/cases', {}, token),
+  listCases: async (token: string): Promise<{ cases: CaseFile[] }> => {
+    if (await hasBackend()) {
+      return request<{ cases: CaseFile[] }>('/api/cases', {}, token);
+    }
+    return staticStore.listCases(token);
+  },
 
-  redeemCaseCode: (token: string, code: string) =>
-    request<{ caseFile: CaseFile; alreadyUnlocked: boolean }>(
-      '/api/cases/redeem',
-      { method: 'POST', body: JSON.stringify({ code }) },
-      token
-    ),
+  redeemCaseCode: async (
+    token: string,
+    code: string
+  ): Promise<{ caseFile: CaseFile; alreadyUnlocked: boolean }> => {
+    if (await hasBackend()) {
+      return request<{ caseFile: CaseFile; alreadyUnlocked: boolean }>(
+        '/api/cases/redeem',
+        { method: 'POST', body: JSON.stringify({ code }) },
+        token
+      );
+    }
+    return staticStore.redeemCaseCode(token, code);
+  },
 
-  createCase: (token: string, payload: Partial<CaseFile>) =>
-    request<{ caseFile: CaseFile }>(
-      '/api/cases',
-      { method: 'POST', body: JSON.stringify(payload) },
-      token
-    ),
+  createCase: async (
+    token: string,
+    payload: Partial<CaseFile>
+  ): Promise<{ caseFile: CaseFile }> => {
+    if (await hasBackend()) {
+      return request<{ caseFile: CaseFile }>(
+        '/api/cases',
+        { method: 'POST', body: JSON.stringify(payload) },
+        token
+      );
+    }
+    return staticStore.createCase(token, payload);
+  },
 
-  updateCase: (token: string, caseId: string, caseFile: CaseFile) =>
-    request<{ caseFile: CaseFile }>(
-      `/api/cases/${encodeURIComponent(caseId)}`,
-      { method: 'PUT', body: JSON.stringify(caseFile) },
-      token
-    ),
+  updateCase: async (
+    token: string,
+    caseId: string,
+    caseFile: CaseFile
+  ): Promise<{ caseFile: CaseFile }> => {
+    if (await hasBackend()) {
+      return request<{ caseFile: CaseFile }>(
+        `/api/cases/${encodeURIComponent(caseId)}`,
+        { method: 'PUT', body: JSON.stringify(caseFile) },
+        token
+      );
+    }
+    return staticStore.updateCase(token, caseId, caseFile);
+  },
 
-  deleteCase: (token: string, caseId: string) =>
-    request<{ deleted: boolean }>(
-      `/api/cases/${encodeURIComponent(caseId)}`,
-      { method: 'DELETE' },
-      token
-    ),
+  deleteCase: async (
+    token: string,
+    caseId: string
+  ): Promise<{ deleted: boolean }> => {
+    if (await hasBackend()) {
+      return request<{ deleted: boolean }>(
+        `/api/cases/${encodeURIComponent(caseId)}`,
+        { method: 'DELETE' },
+        token
+      );
+    }
+    return staticStore.deleteCase(token, caseId);
+  },
 
-  getNotes: (token: string, caseId: string) =>
-    request<{ note: PlayerNote }>(
-      `/api/cases/${encodeURIComponent(caseId)}/notes`,
-      {},
-      token
-    ),
+  getNotes: async (
+    token: string,
+    caseId: string
+  ): Promise<{ note: PlayerNote }> => {
+    if (await hasBackend()) {
+      return request<{ note: PlayerNote }>(
+        `/api/cases/${encodeURIComponent(caseId)}/notes`,
+        {},
+        token
+      );
+    }
+    return staticStore.getNotes(token, caseId);
+  },
 
-  saveNotes: (token: string, caseId: string, note: Partial<PlayerNote>) =>
-    request<{ note: PlayerNote }>(
-      `/api/cases/${encodeURIComponent(caseId)}/notes`,
-      { method: 'PUT', body: JSON.stringify(note) },
-      token
-    ),
+  saveNotes: async (
+    token: string,
+    caseId: string,
+    note: Partial<PlayerNote>
+  ): Promise<{ note: PlayerNote }> => {
+    if (await hasBackend()) {
+      return request<{ note: PlayerNote }>(
+        `/api/cases/${encodeURIComponent(caseId)}/notes`,
+        { method: 'PUT', body: JSON.stringify(note) },
+        token
+      );
+    }
+    return staticStore.saveNotes(token, caseId, note);
+  },
+
+  listMaps: async (token: string): Promise<{ maps: MapTemplate[] }> => {
+    if (await hasBackend()) {
+      return request<{ maps: MapTemplate[] }>('/api/maps', {}, token);
+    }
+    return staticStore.listMaps(token);
+  },
+
+  createMap: async (
+    token: string,
+    payload: Partial<MapTemplate>
+  ): Promise<{ mapTemplate: MapTemplate }> => {
+    if (await hasBackend()) {
+      return request<{ mapTemplate: MapTemplate }>(
+        '/api/maps',
+        { method: 'POST', body: JSON.stringify(payload) },
+        token
+      );
+    }
+    return staticStore.createMap(token, payload);
+  },
+
+  updateMap: async (
+    token: string,
+    mapId: string,
+    payload: Partial<MapTemplate>
+  ): Promise<{ mapTemplate: MapTemplate }> => {
+    if (await hasBackend()) {
+      return request<{ mapTemplate: MapTemplate }>(
+        `/api/maps/${encodeURIComponent(mapId)}`,
+        { method: 'PUT', body: JSON.stringify(payload) },
+        token
+      );
+    }
+    return staticStore.updateMap(token, mapId, payload);
+  },
+
+  deleteMap: async (
+    token: string,
+    mapId: string
+  ): Promise<{ deleted: boolean }> => {
+    if (await hasBackend()) {
+      return request<{ deleted: boolean }>(
+        `/api/maps/${encodeURIComponent(mapId)}`,
+        { method: 'DELETE' },
+        token
+      );
+    }
+    return staticStore.deleteMap(token, mapId);
+  },
 };

@@ -126,7 +126,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
         <section className="lg:col-span-7 relative flex flex-col justify-between p-8 lg:p-12 overflow-hidden bg-slate-900 border-b lg:border-b-0 lg:border-r border-slate-200 dark:border-slate-800/90">
           {!imgFailed ? (
             <img
-              src="/src/assets/images/evidence_crime_scene_1795419420849.jpg"
+              src="./src/assets/images/evidence_crime_scene_1795419420849.jpg"
               alt="Mistige havenkade van Kraaiendonk bij nacht"
               referrerPolicy="no-referrer"
               onError={() => setImgFailed(true)}

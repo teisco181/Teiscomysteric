@@ -2,20 +2,24 @@ import 'dotenv/config';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { AuthUser, CaseFile, PlayerNote } from './src/types.ts';
+import type { AuthUser, CaseFile, MapTemplate, PlayerNote } from './src/types.ts';
 import {
   claimAdminAccount,
   createCase,
+  createMapTemplate,
   deleteCase,
+  deleteMapTemplate,
   getAuthStatus,
   getCaseForUser,
   getPlayerNote,
   listCasesForUser,
+  listMapTemplates,
   loginUser,
   redeemCaseCode,
   registerPlayerAccount,
   savePlayerNote,
   updateCase,
+  updateMapTemplate,
   verifyAuthToken,
 } from './server/store.ts';
 
@@ -200,6 +204,36 @@ async function startServer(): Promise<void> {
     const payload = (req.body ?? {}) as Partial<PlayerNote>;
     const saved = savePlayerNote(req.params.id, req.authUser!.id, payload);
     res.json({ note: saved });
+  });
+
+  // Reusable Map Templates (Admin only)
+  app.get('/api/maps', requireAuth, requireAdmin, (_req, res) => {
+    res.json({ maps: listMapTemplates() });
+  });
+
+  app.post('/api/maps', requireAuth, requireAdmin, (req, res) => {
+    const payload = (req.body ?? {}) as Partial<MapTemplate>;
+    const created = createMapTemplate(payload);
+    res.status(201).json({ mapTemplate: created });
+  });
+
+  app.put('/api/maps/:id', requireAuth, requireAdmin, (req, res) => {
+    const payload = (req.body ?? {}) as Partial<MapTemplate>;
+    const updated = updateMapTemplate(req.params.id, payload);
+    if (!updated) {
+      res.status(404).json({ error: 'Kaart niet gevonden.' });
+      return;
+    }
+    res.json({ mapTemplate: updated });
+  });
+
+  app.delete('/api/maps/:id', requireAuth, requireAdmin, (req, res) => {
+    const ok = deleteMapTemplate(req.params.id);
+    if (!ok) {
+      res.status(404).json({ error: 'Kaart niet gevonden.' });
+      return;
+    }
+    res.json({ deleted: true });
   });
 
   // Serve frontend via Vite in dev or static dist in production

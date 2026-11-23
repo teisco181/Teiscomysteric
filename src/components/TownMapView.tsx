@@ -5,11 +5,14 @@ import {
   Coffee,
   Eye,
   EyeOff,
+  FolderOpen,
   Home,
   Landmark,
+  Map as MapIcon,
   MapPin,
   Minus,
   Plus,
+  Save,
   Search,
   Shield,
   Store,
@@ -22,6 +25,7 @@ import {
   type EvidenceItem,
   type LocationCategory,
   type MapLocation,
+  type MapTemplate,
   type Person,
   type TerrainType,
 } from '../types.ts';
@@ -32,6 +36,11 @@ interface TownMapViewProps {
   onUpdateCase?: (next: CaseFile) => void;
   onSelectPerson?: (person: Person) => void;
   onSelectEvidence?: (evidence: EvidenceItem) => void;
+  mapTemplates?: MapTemplate[];
+  onSaveNewMapTemplate?: (name: string) => Promise<void>;
+  onUpdateMapTemplate?: (mapId: string) => Promise<void>;
+  onApplyMapTemplate?: (template: MapTemplate) => void;
+  onDeleteMapTemplate?: (mapId: string) => Promise<void>;
 }
 
 const TERRAIN_META: Record<
@@ -94,6 +103,11 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
   onUpdateCase,
   onSelectPerson,
   onSelectEvidence,
+  mapTemplates = [],
+  onSaveNewMapTemplate,
+  onUpdateMapTemplate,
+  onApplyMapTemplate,
+  onDeleteMapTemplate,
 }) => {
   const [selectedLocId, setSelectedLocId] = useState<string | null>(
     caseFile.locations[0]?.id ?? null
@@ -104,6 +118,13 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
   const [isPainting, setIsPainting] = useState(false);
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<LocationCategory | 'all'>('all');
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>(
+    mapTemplates[0]?.id ?? ''
+  );
+  const [newTemplateName, setNewTemplateName] = useState('');
+  const [mapBusy, setMapBusy] = useState(false);
+  const [mapNotice, setMapNotice] = useState<string | null>(null);
+  const [confirmDeleteMap, setConfirmDeleteMap] = useState(false);
 
   const selectedLocation = useMemo(
     () => caseFile.locations.find((l) => l.id === selectedLocId) ?? null,
@@ -262,8 +283,177 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
     return caseFile.evidence.filter((e) => e.locationId === selectedLocation.id);
   }, [caseFile.evidence, selectedLocation]);
 
+  const activeTemplate = useMemo(
+    () =>
+      mapTemplates.find((m) => m.id === selectedTemplateId) ??
+      mapTemplates[0] ??
+      null,
+    [mapTemplates, selectedTemplateId]
+  );
+
+  const showNotice = (msg: string) => {
+    setMapNotice(msg);
+    setTimeout(() => setMapNotice(null), 3500);
+  };
+
   return (
     <div className="space-y-6">
+      {/* Reusable General Maps Library (Maker only) */}
+      {editable && (
+        <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0F151D] space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <MapIcon className="w-4 h-4 text-emerald-500" />
+              <div>
+                <h3 className="text-xs font-bold text-slate-900 dark:text-white">
+                  Algemene Kaartenbibliotheek (Herbruikbare dorpen)
+                </h3>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Sla deze kaart op als sjabloon (bijv. Dorp 1) of laad een eerder opgeslagen
+                  kaart in dit dossier.
+                </p>
+              </div>
+            </div>
+            {mapNotice && (
+              <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                {mapNotice}
+              </span>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 pt-1">
+            {/* Load / Update existing general map */}
+            <div className="lg:col-span-7 flex flex-wrap items-center gap-2 p-2.5 rounded-lg bg-slate-50 dark:bg-[#090D12] border border-slate-200 dark:border-slate-800">
+              <select
+                aria-label="Opgeslagen algemene kaart kiezen"
+                value={activeTemplate?.id ?? ''}
+                onChange={(e) => {
+                  setSelectedTemplateId(e.target.value);
+                  setConfirmDeleteMap(false);
+                }}
+                className="flex-1 min-w-[180px] px-2.5 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0F151D]"
+              >
+                {mapTemplates.length === 0 ? (
+                  <option value="">Nog geen opgeslagen kaarten</option>
+                ) : (
+                  mapTemplates.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name} ({m.mapCols}×{m.mapRows} · {m.locations.length} locaties)
+                    </option>
+                  ))
+                )}
+              </select>
+
+              <button
+                type="button"
+                disabled={!activeTemplate || mapBusy}
+                onClick={() => {
+                  if (!activeTemplate || !onApplyMapTemplate) return;
+                  onApplyMapTemplate(activeTemplate);
+                  showNotice(`Kaart "${activeTemplate.name}" ingeladen in dit dossier.`);
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-sky-600 hover:bg-sky-500 disabled:opacity-40 text-white transition-colors whitespace-nowrap"
+              >
+                <FolderOpen className="w-3.5 h-3.5" />
+                <span>Inladen in dossier</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={!activeTemplate || mapBusy}
+                onClick={async () => {
+                  if (!activeTemplate || !onUpdateMapTemplate) return;
+                  setMapBusy(true);
+                  try {
+                    await onUpdateMapTemplate(activeTemplate.id);
+                    showNotice(`Algemene kaart "${activeTemplate.name}" bijgewerkt.`);
+                  } finally {
+                    setMapBusy(false);
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors whitespace-nowrap"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>Bijwerken</span>
+              </button>
+
+              {activeTemplate &&
+                onDeleteMapTemplate &&
+                (!confirmDeleteMap ? (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDeleteMap(true)}
+                    aria-label="Algemene kaart verwijderen"
+                    className="p-1.5 rounded-lg border border-rose-500/30 text-rose-600 dark:text-rose-400 hover:bg-rose-500/10"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                ) : (
+                  <div className="inline-flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setMapBusy(true);
+                        try {
+                          await onDeleteMapTemplate(activeTemplate.id);
+                          setConfirmDeleteMap(false);
+                          showNotice(`Kaart "${activeTemplate.name}" verwijderd.`);
+                        } finally {
+                          setMapBusy(false);
+                        }
+                      }}
+                      className="px-2 py-1 text-[11px] font-semibold rounded bg-rose-600 text-white"
+                    >
+                      Verwijder
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteMap(false)}
+                      className="px-2 py-1 text-[11px] rounded border border-slate-300 dark:border-slate-700"
+                    >
+                      Nee
+                    </button>
+                  </div>
+                ))}
+            </div>
+
+            {/* Save current map as new reusable general map */}
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (!onSaveNewMapTemplate) return;
+                const cleanName = newTemplateName.trim() || caseFile.townName || 'Dorp 1';
+                setMapBusy(true);
+                try {
+                  await onSaveNewMapTemplate(cleanName);
+                  setNewTemplateName('');
+                  showNotice(`Kaart "${cleanName}" opgeslagen voor hergebruik.`);
+                } finally {
+                  setMapBusy(false);
+                }
+              }}
+              className="lg:col-span-5 flex items-center gap-2 p-2.5 rounded-lg bg-slate-50 dark:bg-[#090D12] border border-slate-200 dark:border-slate-800"
+            >
+              <input
+                type="text"
+                value={newTemplateName}
+                onChange={(e) => setNewTemplateName(e.target.value)}
+                placeholder="Naam nieuwe kaart (bijv. Dorp 1)..."
+                className="flex-1 min-w-[140px] px-2.5 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0F151D]"
+              />
+              <button
+                type="submit"
+                disabled={mapBusy}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white transition-colors whitespace-nowrap shrink-0"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Opslaan als kaart</span>
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0F151D]">
         {editable ? (
