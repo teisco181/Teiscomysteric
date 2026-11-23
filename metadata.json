@@ -1,0 +1,6 @@
+{
+  "name": "Teiscomysterics",
+  "description": "Digitaal politiesysteem voor mysteries: bouw interactieve dorpskaarten, pixel-vingerafdrukken en bewijsdossiers voor speurders.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

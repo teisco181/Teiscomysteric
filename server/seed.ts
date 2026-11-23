@@ -1,0 +1,353 @@
+import {
+  MAP_COLS,
+  MAP_ROWS,
+  type CaseFile,
+  type TerrainType,
+} from '../src/types.ts';
+import {
+  createSmudgedTrace,
+  generateFingerprintPreset,
+} from '../src/utils/fingerprint.ts';
+
+function buildKraaiendonkTerrain(): TerrainType[] {
+  const grid: TerrainType[] = new Array<TerrainType>(MAP_COLS * MAP_ROWS).fill('grass');
+  const setTile = (x: number, y: number, t: TerrainType) => {
+    if (x >= 0 && x < MAP_COLS && y >= 0 && y < MAP_ROWS) {
+      grid[y * MAP_COLS + x] = t;
+    }
+  };
+
+  // Canal / harbor along bottom-left to middle-right
+  for (let x = 0; x < MAP_COLS; x++) {
+    setTile(x, 11, 'water');
+    setTile(x, 12, 'water');
+    setTile(x, 13, 'water');
+  }
+  // Northern canal branch
+  for (let y = 0; y < 11; y++) {
+    setTile(16, y, 'water');
+    setTile(17, y, 'water');
+  }
+
+  // Cobble harbor quay
+  for (let x = 0; x < 16; x++) {
+    setTile(x, 10, 'cobble');
+  }
+
+  // Main east-west road & bridge
+  for (let x = 1; x < 23; x++) {
+    setTile(x, 6, 'road');
+  }
+  setTile(16, 6, 'bridge');
+  setTile(17, 6, 'bridge');
+
+  // North-south street
+  for (let y = 1; y <= 10; y++) {
+    setTile(8, y, 'road');
+  }
+
+  // Market plaza
+  for (let y = 4; y <= 7; y++) {
+    for (let x = 7; x <= 10; x++) {
+      setTile(x, y, 'plaza');
+    }
+  }
+
+  // Forest edge on top-right
+  for (let y = 0; y <= 3; y++) {
+    for (let x = 19; x <= 23; x++) {
+      setTile(x, y, 'forest');
+    }
+  }
+
+  return grid;
+}
+
+export function createStarterCase(): CaseFile {
+  const now = new Date().toISOString();
+
+  const fpHendrik = generateFingerprintPreset('Kring', 11);
+  const fpClaire = generateFingerprintPreset('Lus', 24);
+  const fpBram = generateFingerprintPreset('Samengesteld', 37);
+  const fpLotje = generateFingerprintPreset('Boog', 45);
+
+  return {
+    id: 'case-kraaiendonk-047',
+    code: 'ZAAK-047',
+    joinCode: 'ZAAK-047',
+    title: 'De Schaduw van Kraaiendonk',
+    townName: 'Kraaiendonk',
+    subtitle: 'Verdwijning bij de Oude Havenkade',
+    status: 'published',
+    briefing:
+      'In de mistige nacht van 14 november is klokkenmaker en restaurateur Johan van Dijk spoorloos verdwenen uit zijn atelier aan de Havenkade. Op de kade werd zijn gebroken zakhorloge aangetroffen naast een afgesloten kistje uit het gemeentearchief. De recherche heeft een papieren dossier samengesteld met plaatselijke verklaringen en afgenomen sporen. Gebruik het politiesysteem om locaties in Kraaiendonk na te trekken, profielen te onderzoeken en de sporen in uw papieren dossier te matchen met de vingerafdrukdatabank.',
+    printedDossierGuide:
+      'Instructie bij het papieren dossier: Vergelijk Spoorcode BW-01A (aangetroffen op het gebroken zakhorloge) en BW-02B (aangetroffen op de koperen apothekerssleutel) via de Vingerafdruk Vergelijker. Controleer tevens de alibi-tijden op de dorpskaart.',
+    mapCols: MAP_COLS,
+    mapRows: MAP_ROWS,
+    terrain: buildKraaiendonkTerrain(),
+    locations: [
+      {
+        id: 'loc-politiebureau',
+        code: 'LOC-01',
+        name: 'Politiebureau Kraaiendonk',
+        category: 'police',
+        x: 9,
+        y: 2,
+        width: 3,
+        height: 2,
+        address: 'Marktplein 1',
+        description: 'Hoofdkwartier van de lokale recherche en archiefkluis.',
+        publicNote: 'Alle fysieke bewijsstukken worden hier bewaard.',
+        visibleToPlayers: true,
+      },
+      {
+        id: 'loc-havenkantoor',
+        code: 'LOC-02',
+        name: 'Havenkantoor De Sluis',
+        category: 'harbor',
+        x: 2,
+        y: 8,
+        width: 3,
+        height: 2,
+        address: 'Havenkade 12',
+        description: 'Houten havenloods met uitzicht op de aanlegsteiger en nachtelijke mistlampen.',
+        publicNote: 'Werkplek van havenmeester Hendrik Vos. Nachtregister loopt tot 00:30.',
+        visibleToPlayers: true,
+      },
+      {
+        id: 'loc-apotheek',
+        code: 'LOC-03',
+        name: 'Apotheek Vermeer',
+        category: 'shop',
+        x: 4,
+        y: 3,
+        width: 3,
+        height: 2,
+        address: 'Kerkstraat 4',
+        description: 'Historische dorpsapotheek met achteruitgang naar het marktplein.',
+        publicNote: 'Geopend tot 18:00. Beschikt over een eigen laboratoriumkelder.',
+        visibleToPlayers: true,
+      },
+      {
+        id: 'loc-uurwerkatelier',
+        code: 'LOC-04',
+        name: 'Uurwerkatelier Koster',
+        category: 'shop',
+        x: 11,
+        y: 7,
+        width: 3,
+        height: 2,
+        address: 'Havenkade 28',
+        description: 'Werkplaats voor antieke klokken en mechanische sloten.',
+        publicNote: 'Laatst bekende plek waar het slachtoffer rond 22:15 werd gezien.',
+        visibleToPlayers: true,
+      },
+      {
+        id: 'loc-anker',
+        code: 'LOC-05',
+        name: "Café 't Anker",
+        category: 'tavern',
+        x: 13,
+        y: 3,
+        width: 2,
+        height: 2,
+        address: 'Brugstraat 9',
+        description: 'Havenkroeg waar schippers en journalisten elkaar treffen.',
+        publicNote: 'Meerdere getuigen bevestigen drukte rond 23:00.',
+        visibleToPlayers: true,
+      },
+      {
+        id: 'loc-archief',
+        code: 'LOC-06',
+        name: 'Oud Gemeentehuis',
+        category: 'landmark',
+        x: 19,
+        y: 7,
+        width: 3,
+        height: 3,
+        address: 'Oosterweg 2',
+        description: 'Monumentaal pand aan de overkant van de brug met slecht verlicht archief.',
+        publicNote: 'Er werd melding gemaakt van een openstaand raam op de begane grond.',
+        visibleToPlayers: true,
+      },
+    ],
+    persons: [
+      {
+        id: 'per-hendrik-vos',
+        code: 'PRS-01',
+        name: 'Hendrik Vos',
+        alias: 'De Schipper',
+        age: 56,
+        occupation: 'Havenmeester',
+        address: 'Havenkade 12',
+        locationId: 'loc-havenkantoor',
+        portraitUrl: '/src/assets/images/suspect_hendrik_vos_1795419420108.jpg',
+        status: 'verdachte',
+        alibi: 'Beweert vanaf 22:00 alleen op het havenkantoor de sluisadministratie te hebben bijgewerkt.',
+        publicBio:
+          'Al 24 jaar havenmeester van Kraaiendonk. Bekend om zijn strakke discipline en eerdere onenigheid met Johan van Dijk over liggelden.',
+        policeNotes: 'Er zijn moddersporen aangetroffen bij zijn laarzen; schuurdeur was ongebruikelijk afgesloten.',
+        fingerprintCode: 'FP-VOS-01',
+        fingerprintPattern: 'Kring',
+        fingerprint: fpHendrik,
+        isCulprit: false,
+        creatorSecretNote: 'Hendrik hield enkel smokkelwaar verborgen, niet betrokken bij de verdwijning.',
+      },
+      {
+        id: 'per-claire-vermeer',
+        code: 'PRS-02',
+        name: 'Claire Vermeer',
+        alias: 'Dr. Vermeer',
+        age: 34,
+        occupation: 'Apotheker',
+        address: 'Kerkstraat 4',
+        locationId: 'loc-apotheek',
+        portraitUrl: '/src/assets/images/suspect_claire_vermeer_1795419419847.jpg',
+        status: 'verdachte',
+        alibi: 'Zegt de hele avond thuis boven de apotheek administratie te hebben gedaan.',
+        publicBio:
+          'Nam drie jaar geleden de apotheek over. Levert specialistische oliën en chemicaliën voor restauratiewerk.',
+        policeNotes: 'Een koperen sleutel met sporen van slaapmiddel werd nabij het gemeentearchief gevonden.',
+        fingerprintCode: 'FP-VER-02',
+        fingerprintPattern: 'Lus',
+        fingerprint: fpClaire,
+        isCulprit: true,
+        creatorSecretNote: 'Hoofdverdachte: Haar afdruk (BW-02B) zit op de koperen sleutel van het archief.',
+      },
+      {
+        id: 'per-bram-koster',
+        code: 'PRS-03',
+        name: 'Bram Koster',
+        alias: 'Bram de Klok',
+        age: 42,
+        occupation: 'Klokkenmaker',
+        address: 'Havenkade 28',
+        locationId: 'loc-uurwerkatelier',
+        portraitUrl: '/src/assets/images/suspect_bram_koster_1795419420117.jpg',
+        status: 'getuige',
+        alibi: "Was tot 23:15 in Café 't Anker met twee stamgasten.",
+        publicBio:
+          'Compagnon van het slachtoffer. Had als enige de reservesleutel van het uurwerkatelier.',
+        policeNotes: 'Zijn afdrukken staan logischerwijs op gereedschap, maar mogelijk ook op het zakhorloge.',
+        fingerprintCode: 'FP-KOS-03',
+        fingerprintPattern: 'Samengesteld',
+        fingerprint: fpBram,
+        isCulprit: false,
+        creatorSecretNote: 'Bram repareerde het horloge eerder die middag.',
+      },
+      {
+        id: 'per-lotje-bakker',
+        code: 'PRS-04',
+        name: 'Lotje Bakker',
+        alias: 'Perskaart 88',
+        age: 28,
+        occupation: 'Onderzoeksjournalist',
+        address: 'Brugstraat 9',
+        locationId: 'loc-anker',
+        portraitUrl: '/src/assets/images/suspect_lotje_bakker_1795419420110.jpg',
+        status: 'burger',
+        alibi: 'Fotografeerde de mist bij de brug rond 23:30 en sprak met barkeeper.',
+        publicBio:
+          'Schrijft een reeks artikelen over oude erfpachtcontracten in Kraaiendonk.',
+        policeNotes: 'Leverde waardevolle tijdslijnfoto van de Havenkade aan.',
+        fingerprintCode: 'FP-BAK-04',
+        fingerprintPattern: 'Boog',
+        fingerprint: fpLotje,
+        isCulprit: false,
+        creatorSecretNote: 'Onthulde de link tussen de apotheek en het oude gemeentearchief.',
+      },
+    ],
+    evidence: [
+      {
+        id: 'ev-horloge',
+        code: 'BW-01',
+        title: 'Gebroken Zakhorloge',
+        category: 'voorwerp',
+        locationId: 'loc-havenkantoor',
+        foundAtLabel: 'Steiger bij Havenkade 12',
+        description: 'Zilveren zakhorloge stilgevallen op 23:42. Achterklep geforceerd.',
+        forensicReport:
+          'Latente vingerafdruk Spoor BW-01A veiliggesteld op de binnenzijde van de zilveren klep.',
+        imageUrl: '/src/assets/images/evidence_crime_scene_1795419420849.jpg',
+        visibleToPlayers: true,
+        stamps: [
+          {
+            id: 'stamp-01a',
+            label: 'Spoor BW-01A',
+            personId: 'per-bram-koster',
+            x: 38,
+            y: 52,
+            rotation: -12,
+            smudgeLevel: 25,
+            matrix: createSmudgedTrace(fpBram, 25, 'full', 14),
+          },
+        ],
+      },
+      {
+        id: 'ev-sleutel',
+        code: 'BW-02',
+        title: 'Koperen Archiefsleutel',
+        category: 'spoor',
+        locationId: 'loc-archief',
+        foundAtLabel: 'Grasstrook achter Oud Gemeentehuis',
+        description: 'Oude koperen sleutel met resten van heldere etherische olie.',
+        forensicReport:
+          'Deels vervaagde rechterhand-duimafdruk Spoor BW-02B gelicht van het koperen handvat.',
+        imageUrl: '',
+        visibleToPlayers: true,
+        stamps: [
+          {
+            id: 'stamp-02b',
+            label: 'Spoor BW-02B',
+            personId: 'per-claire-vermeer',
+            x: 62,
+            y: 44,
+            rotation: 18,
+            smudgeLevel: 32,
+            matrix: createSmudgedTrace(fpClaire, 30, 'right', 29),
+          },
+        ],
+      },
+      {
+        id: 'ev-notitie',
+        code: 'BW-03',
+        title: 'Verbrand Kladbriefje',
+        category: 'document',
+        locationId: 'loc-uurwerkatelier',
+        foundAtLabel: 'Kachel in Uurwerkatelier',
+        description: 'Half verbrand bericht: "...kluis om 23:30, niemand mag het register van 1998 zien..."',
+        forensicReport: 'Geen bruikbare vingerafdrukken door hitteschade; handschrift wordt geanalyseerd.',
+        imageUrl: '',
+        visibleToPlayers: true,
+        stamps: [],
+      },
+      {
+        id: 'ev-flesje',
+        code: 'BW-04',
+        title: 'Leeg Glazen Flesje',
+        category: 'biologisch',
+        locationId: 'loc-apotheek',
+        foundAtLabel: 'Afvalcontainer Kerkstraat 4',
+        description: 'Klein bruin flesje zonder etiket, geur van chloralhydraat.',
+        forensicReport: 'Gedeeltelijk spoor BW-04C aangetroffen aan de hals van het flesje.',
+        imageUrl: '',
+        visibleToPlayers: true,
+        stamps: [
+          {
+            id: 'stamp-04c',
+            label: 'Spoor BW-04C',
+            personId: 'per-claire-vermeer',
+            x: 50,
+            y: 35,
+            rotation: -6,
+            smudgeLevel: 20,
+            matrix: createSmudgedTrace(fpClaire, 18, 'top', 41),
+          },
+        ],
+      },
+    ],
+    createdAt: now,
+    updatedAt: now,
+  };
+}
