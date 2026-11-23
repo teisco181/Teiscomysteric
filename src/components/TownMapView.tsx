@@ -2,7 +2,9 @@ import React, { useMemo, useState } from 'react';
 import {
   Anchor,
   Building2,
+  CircleDashed,
   Coffee,
+  Compass,
   Eye,
   EyeOff,
   FolderOpen,
@@ -11,12 +13,14 @@ import {
   Map as MapIcon,
   MapPin,
   Minus,
+  Plane,
   Plus,
   Save,
   Search,
   Shield,
   Store,
   Trash2,
+  Trees,
 } from 'lucide-react';
 import {
   MAP_COLS,
@@ -25,9 +29,11 @@ import {
   type EvidenceItem,
   type LocationCategory,
   type MapLocation,
+  type MapLocationKind,
   type MapTemplate,
   type Person,
   type TerrainType,
+  type ZoneColor,
 } from '../types.ts';
 
 interface TownMapViewProps {
@@ -95,7 +101,108 @@ const CATEGORY_META: Record<
   tavern: { label: 'Horeca', Icon: Coffee },
   landmark: { label: 'Monument / Pand', Icon: Landmark },
   alley: { label: 'Steeg / Plek', Icon: MapPin },
+  park: { label: 'Park / Natuur', Icon: Trees },
+  airport: { label: 'Vliegveld / Vervoer', Icon: Plane },
+  district: { label: 'Wijk / Gebied', Icon: Compass },
 };
+
+const ZONE_COLOR_META: Record<
+  ZoneColor,
+  {
+    label: string;
+    fillAndBorder: string;
+    selectedRing: string;
+    badge: string;
+    swatch: string;
+  }
+> = {
+  emerald: {
+    label: 'Groen (Park)',
+    fillAndBorder: 'border-emerald-500/80 bg-emerald-500/15 text-emerald-950 dark:text-emerald-100',
+    selectedRing: 'ring-2 ring-emerald-400 bg-emerald-500/25 border-emerald-400',
+    badge: 'bg-emerald-600 text-white border-emerald-400',
+    swatch: 'bg-emerald-500',
+  },
+  sky: {
+    label: 'Blauw (Vliegveld / Water)',
+    fillAndBorder: 'border-sky-500/80 bg-sky-500/15 text-sky-950 dark:text-sky-100',
+    selectedRing: 'ring-2 ring-sky-400 bg-sky-500/25 border-sky-400',
+    badge: 'bg-sky-600 text-white border-sky-400',
+    swatch: 'bg-sky-500',
+  },
+  amber: {
+    label: 'Amber (Terrein / Industrie)',
+    fillAndBorder: 'border-amber-500/80 bg-amber-500/15 text-amber-950 dark:text-amber-100',
+    selectedRing: 'ring-2 ring-amber-400 bg-amber-500/25 border-amber-400',
+    badge: 'bg-amber-600 text-white border-amber-400',
+    swatch: 'bg-amber-500',
+  },
+  rose: {
+    label: 'Rood (Verboden / Delict)',
+    fillAndBorder: 'border-rose-500/80 bg-rose-500/15 text-rose-950 dark:text-rose-100',
+    selectedRing: 'ring-2 ring-rose-400 bg-rose-500/25 border-rose-400',
+    badge: 'bg-rose-600 text-white border-rose-400',
+    swatch: 'bg-rose-500',
+  },
+  violet: {
+    label: 'Paars (Evenement / Zone)',
+    fillAndBorder: 'border-violet-500/80 bg-violet-500/15 text-violet-950 dark:text-violet-100',
+    selectedRing: 'ring-2 ring-violet-400 bg-violet-500/25 border-violet-400',
+    badge: 'bg-violet-600 text-white border-violet-400',
+    swatch: 'bg-violet-500',
+  },
+};
+
+const BUILDING_COLOR_META: Record<
+  ZoneColor,
+  {
+    label: string;
+    card: string;
+    selectedCard: string;
+    code: string;
+    selectedCode: string;
+  }
+> = {
+  emerald: {
+    label: 'Groen',
+    card: 'bg-emerald-50/95 dark:bg-emerald-950/90 text-emerald-950 dark:text-emerald-100 border-emerald-500/80 hover:border-emerald-400',
+    selectedCard: 'bg-emerald-600 text-white border-emerald-300 ring-2 ring-emerald-400/70 z-20',
+    code: 'text-emerald-700 dark:text-emerald-300',
+    selectedCode: 'text-emerald-100',
+  },
+  sky: {
+    label: 'Blauw',
+    card: 'bg-sky-50/95 dark:bg-sky-950/90 text-sky-950 dark:text-sky-100 border-sky-500/80 hover:border-sky-400',
+    selectedCard: 'bg-sky-600 text-white border-sky-300 ring-2 ring-sky-400/70 z-20',
+    code: 'text-sky-700 dark:text-sky-300',
+    selectedCode: 'text-sky-100',
+  },
+  amber: {
+    label: 'Amber',
+    card: 'bg-amber-50/95 dark:bg-amber-950/90 text-amber-950 dark:text-amber-100 border-amber-500/80 hover:border-amber-400',
+    selectedCard: 'bg-amber-600 text-white border-amber-300 ring-2 ring-amber-400/70 z-20',
+    code: 'text-amber-700 dark:text-amber-300',
+    selectedCode: 'text-amber-100',
+  },
+  rose: {
+    label: 'Rood',
+    card: 'bg-rose-50/95 dark:bg-rose-950/90 text-rose-950 dark:text-rose-100 border-rose-500/80 hover:border-rose-400',
+    selectedCard: 'bg-rose-600 text-white border-rose-300 ring-2 ring-rose-400/70 z-20',
+    code: 'text-rose-700 dark:text-rose-300',
+    selectedCode: 'text-rose-100',
+  },
+  violet: {
+    label: 'Paars',
+    card: 'bg-violet-50/95 dark:bg-violet-950/90 text-violet-950 dark:text-violet-100 border-violet-500/80 hover:border-violet-400',
+    selectedCard: 'bg-violet-600 text-white border-violet-300 ring-2 ring-violet-400/70 z-20',
+    code: 'text-violet-700 dark:text-violet-300',
+    selectedCode: 'text-violet-100',
+  },
+};
+
+function getLocationKind(loc: MapLocation): MapLocationKind {
+  return loc.kind === 'zone' ? 'zone' : 'building';
+}
 
 export const TownMapView: React.FC<TownMapViewProps> = ({
   caseFile,
@@ -113,10 +220,17 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
     caseFile.locations[0]?.id ?? null
   );
   const [paintTerrain, setPaintTerrain] = useState<TerrainType | null>(null);
-  const [placingNew, setPlacingNew] = useState(false);
+  const [placeMode, setPlaceMode] = useState<MapLocationKind | null>(null);
+  const [zoneDrawStart, setZoneDrawStart] = useState<{ x: number; y: number } | null>(
+    null
+  );
+  const [zoneDrawCurrent, setZoneDrawCurrent] = useState<{ x: number; y: number } | null>(
+    null
+  );
   const [movingLocId, setMovingLocId] = useState<string | null>(null);
   const [isPainting, setIsPainting] = useState(false);
   const [search, setSearch] = useState('');
+  const [kindFilter, setKindFilter] = useState<'all' | MapLocationKind>('all');
   const [categoryFilter, setCategoryFilter] = useState<LocationCategory | 'all'>('all');
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(
     mapTemplates[0]?.id ?? ''
@@ -125,15 +239,27 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
   const [mapBusy, setMapBusy] = useState(false);
   const [mapNotice, setMapNotice] = useState<string | null>(null);
   const [confirmDeleteMap, setConfirmDeleteMap] = useState(false);
+  const [hoveredTile, setHoveredTile] = useState<{ x: number; y: number } | null>(null);
 
   const selectedLocation = useMemo(
     () => caseFile.locations.find((l) => l.id === selectedLocId) ?? null,
     [caseFile.locations, selectedLocId]
   );
 
+  const buildingLocations = useMemo(
+    () => caseFile.locations.filter((l) => getLocationKind(l) === 'building'),
+    [caseFile.locations]
+  );
+
+  const zoneLocations = useMemo(
+    () => caseFile.locations.filter((l) => getLocationKind(l) === 'zone'),
+    [caseFile.locations]
+  );
+
   const filteredLocations = useMemo(() => {
     const q = search.trim().toLowerCase();
     return caseFile.locations.filter((loc) => {
+      if (kindFilter !== 'all' && getLocationKind(loc) !== kindFilter) return false;
       if (categoryFilter !== 'all' && loc.category !== categoryFilter) return false;
       if (!q) return true;
       const linkedPersons = caseFile.persons.filter((p) => p.locationId === loc.id);
@@ -146,10 +272,11 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
         loc.name.toLowerCase().includes(q) ||
         loc.address.toLowerCase().includes(q) ||
         loc.code.toLowerCase().includes(q) ||
+        loc.description.toLowerCase().includes(q) ||
         matchesPerson
       );
     });
-  }, [caseFile.locations, caseFile.persons, search, categoryFilter]);
+  }, [caseFile.locations, caseFile.persons, search, kindFilter, categoryFilter]);
 
   const matchingIds = useMemo(
     () => new Set(filteredLocations.map((l) => l.id)),
@@ -158,6 +285,32 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
 
   const mapCols = Math.max(8, Math.min(48, caseFile.mapCols || MAP_COLS));
   const mapRows = Math.max(6, Math.min(36, caseFile.mapRows || MAP_ROWS));
+
+  const hoveredLocations = useMemo(() => {
+    if (!hoveredTile) return [];
+    const matches = caseFile.locations.filter(
+      (loc) =>
+        hoveredTile.x >= loc.x &&
+        hoveredTile.x < loc.x + loc.width &&
+        hoveredTile.y >= loc.y &&
+        hoveredTile.y < loc.y + loc.height
+    );
+    // Show solid buildings before enclosing POV zones
+    return matches.sort((a, b) => {
+      const ka = getLocationKind(a) === 'building' ? 0 : 1;
+      const kb = getLocationKind(b) === 'building' ? 0 : 1;
+      return ka - kb;
+    });
+  }, [hoveredTile, caseFile.locations]);
+
+  const zonePreviewRect = useMemo(() => {
+    if (!zoneDrawStart || !zoneDrawCurrent) return null;
+    const x = Math.min(zoneDrawStart.x, zoneDrawCurrent.x);
+    const y = Math.min(zoneDrawStart.y, zoneDrawCurrent.y);
+    const width = Math.abs(zoneDrawCurrent.x - zoneDrawStart.x) + 1;
+    const height = Math.abs(zoneDrawCurrent.y - zoneDrawStart.y) + 1;
+    return { x, y, width, height };
+  }, [zoneDrawStart, zoneDrawCurrent]);
 
   const resizeMap = (nextCols: number, nextRows: number) => {
     if (!editable || !onUpdateCase) return;
@@ -197,22 +350,72 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
     });
   };
 
+  const commitZoneDraw = () => {
+    if (!editable || !onUpdateCase || placeMode !== 'zone' || !zoneDrawStart) {
+      setZoneDrawStart(null);
+      setZoneDrawCurrent(null);
+      return;
+    }
+
+    const end = zoneDrawCurrent ?? zoneDrawStart;
+    const rawX = Math.min(zoneDrawStart.x, end.x);
+    const rawY = Math.min(zoneDrawStart.y, end.y);
+    let width = Math.abs(end.x - zoneDrawStart.x) + 1;
+    let height = Math.abs(end.y - zoneDrawStart.y) + 1;
+
+    // Single click without drag creates a comfortable default 4x3 POV zone
+    if (width === 1 && height === 1) {
+      width = Math.min(4, Math.max(1, mapCols - rawX));
+      height = Math.min(3, Math.max(1, mapRows - rawY));
+    }
+
+    const nextIndex = zoneLocations.length + 1;
+    const nextCode = `POV-${String(nextIndex).padStart(2, '0')}`;
+    const created: MapLocation = {
+      id: `pov-${Date.now().toString(36)}`,
+      code: nextCode,
+      name: `Nieuw Gebied (POV) ${nextIndex}`,
+      category: 'park',
+      kind: 'zone',
+      zoneColor: 'emerald',
+      x: rawX,
+      y: rawY,
+      width,
+      height,
+      address: `${caseFile.townName} — Sector ${nextIndex}`,
+      description: 'Omcirkeld gebied / POV op de kaart (bijv. park, plein of vliegveld).',
+      publicNote: '',
+      visibleToPlayers: true,
+    };
+
+    onUpdateCase({
+      ...caseFile,
+      locations: [...caseFile.locations, created],
+    });
+    setSelectedLocId(created.id);
+    setPlaceMode(null);
+    setZoneDrawStart(null);
+    setZoneDrawCurrent(null);
+  };
+
   const handleTileAction = (x: number, y: number) => {
     if (!editable || !onUpdateCase) return;
 
-    if (placingNew) {
+    if (placeMode === 'building') {
+      const nextIndex = buildingLocations.length + 1;
       const nextCode = `LOC-${String(caseFile.locations.length + 1).padStart(2, '0')}`;
       const created: MapLocation = {
         id: `loc-${Date.now().toString(36)}`,
         code: nextCode,
-        name: `Nieuwe Locatie ${caseFile.locations.length + 1}`,
+        name: `Nieuw Gebouw ${nextIndex}`,
         category: 'house',
+        kind: 'building',
         x: Math.min(x, Math.max(0, mapCols - 2)),
         y: Math.min(y, Math.max(0, mapRows - 2)),
         width: 2,
         height: 2,
-        address: `Dorpsstraat ${caseFile.locations.length + 1}`,
-        description: 'Nieuwe locatie in het dorp.',
+        address: `Dorpsstraat ${nextIndex}`,
+        description: 'Nieuw gebouw op de kaart.',
         publicNote: '',
         visibleToPlayers: true,
       };
@@ -221,7 +424,7 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
         locations: [...caseFile.locations, created],
       });
       setSelectedLocId(created.id);
-      setPlacingNew(false);
+      setPlaceMode(null);
       return;
     }
 
@@ -296,6 +499,13 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
     setTimeout(() => setMapNotice(null), 3500);
   };
 
+  const selectedKind: MapLocationKind = selectedLocation
+    ? getLocationKind(selectedLocation)
+    : 'building';
+
+  const isInteractiveOverlayDisabled =
+    editable && (Boolean(paintTerrain) || Boolean(placeMode) || Boolean(movingLocId));
+
   return (
     <div className="space-y-6">
       {/* Reusable General Maps Library (Maker only) */}
@@ -309,8 +519,8 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
                   Algemene Kaartenbibliotheek (Herbruikbare dorpen)
                 </h3>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                  Sla deze kaart op als sjabloon (bijv. Dorp 1) of laad een eerder opgeslagen
-                  kaart in dit dossier.
+                  Sla deze kaart (inclusief gebouwen &amp; omcirkelde POV-gebieden) op als sjabloon
+                  of laad een eerder opgeslagen kaart in dit dossier.
                 </p>
               </div>
             </div>
@@ -467,7 +677,9 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
                 type="button"
                 onClick={() => {
                   setPaintTerrain(paintTerrain === t ? null : t);
-                  setPlacingNew(false);
+                  setPlaceMode(null);
+                  setZoneDrawStart(null);
+                  setZoneDrawCurrent(null);
                   setMovingLocId(null);
                 }}
                 className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors whitespace-nowrap shrink-0 ${
@@ -479,24 +691,55 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
                 {TERRAIN_META[t].label}
               </button>
             ))}
+
             <div className="h-5 w-px bg-slate-200 dark:bg-slate-800 mx-1" />
+
             <button
               type="button"
               onClick={() => {
-                setPlacingNew(!placingNew);
+                setPlaceMode(placeMode === 'building' ? null : 'building');
                 setPaintTerrain(null);
+                setZoneDrawStart(null);
+                setZoneDrawCurrent(null);
                 setMovingLocId(null);
               }}
               className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 ${
-                placingNew
+                placeMode === 'building'
                   ? 'bg-sky-600 text-white'
                   : 'bg-emerald-600 hover:bg-emerald-500 text-white'
               }`}
             >
-              <Plus className="w-3.5 h-3.5" />
-              <span>{placingNew ? 'Klik op de kaart...' : 'Locatie toevoegen'}</span>
+              <Building2 className="w-3.5 h-3.5" />
+              <span>
+                {placeMode === 'building' ? 'Klik op de kaart...' : 'Gebouw toevoegen'}
+              </span>
             </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setPlaceMode(placeMode === 'zone' ? null : 'zone');
+                setPaintTerrain(null);
+                setZoneDrawStart(null);
+                setZoneDrawCurrent(null);
+                setMovingLocId(null);
+              }}
+              className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg border transition-colors whitespace-nowrap shrink-0 ${
+                placeMode === 'zone'
+                  ? 'bg-sky-600 text-white border-sky-500'
+                  : 'border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20'
+              }`}
+            >
+              <CircleDashed className="w-3.5 h-3.5" />
+              <span>
+                {placeMode === 'zone'
+                  ? 'Sleep over gebied...'
+                  : 'Gebied / POV omcirkelen'}
+              </span>
+            </button>
+
             <div className="h-5 w-px bg-slate-200 dark:bg-slate-800 mx-1" />
+
             <div className="flex flex-wrap items-center gap-2">
               <div className="inline-flex items-center rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#090D12] overflow-hidden">
                 <button
@@ -549,15 +792,38 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
           </div>
         ) : (
           <div className="flex flex-wrap items-center gap-3 flex-1">
-            <div className="relative flex-1 min-w-[220px] max-w-sm">
+            <div className="relative flex-1 min-w-[200px] max-w-sm">
               <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Zoek adres, gebouw of bewoner..."
+                placeholder="Zoek gebouw, gebied, park of bewoner..."
                 className="w-full pl-9 pr-3 py-2 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#090D12] text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
               />
+            </div>
+
+            <div className="flex items-center gap-1 p-1 rounded-lg bg-slate-100 dark:bg-[#090D12] border border-slate-200 dark:border-slate-800">
+              {(
+                [
+                  { id: 'all', label: 'Alles' },
+                  { id: 'building', label: 'Gebouwen' },
+                  { id: 'zone', label: 'Gebieden (POV)' },
+                ] as const
+              ).map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setKindFilter(item.id)}
+                  className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
+                    kindFilter === item.id
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
             </div>
 
             <div className="flex flex-wrap items-center gap-1 p-1 rounded-lg bg-slate-100 dark:bg-[#090D12] border border-slate-200 dark:border-slate-800">
@@ -570,7 +836,7 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
                     : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
-                Alles
+                Alle categorieën
               </button>
               {(Object.keys(CATEGORY_META) as LocationCategory[]).map((cat) => (
                 <button
@@ -591,7 +857,7 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
         )}
 
         <div className="text-xs font-mono text-slate-500 dark:text-slate-400">
-          {caseFile.townName} · {caseFile.locations.length} locaties
+          {caseFile.townName} · {buildingLocations.length} gebouwen · {zoneLocations.length} POV
         </div>
       </div>
 
@@ -606,14 +872,16 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
                 {editable
-                  ? placingNew
-                    ? 'Klik op een vakje om de nieuwe locatie te plaatsen.'
+                  ? placeMode === 'building'
+                    ? 'Klik op een vakje om een nieuw gebouw te plaatsen.'
+                    : placeMode === 'zone'
+                    ? 'Sleep over de kaart om een gebied (POV) te omcirkelen, zoals een park of vliegveld (of klik voor 4×3).'
                     : movingLocId
                     ? 'Klik op de nieuwe positie voor de geselecteerde locatie.'
                     : paintTerrain
                     ? `Actieve penseel: ${TERRAIN_META[paintTerrain].label} (klik of sleep over tegels).`
-                    : 'Selecteer een penseel om het terrein te tekenen of klik op een gebouw.'
-                  : 'Klik op een gebouw of plein voor adressen, bewoners en gevonden sporen.'}
+                    : 'Teken terrein, voeg gebouwen toe of omcirkel gebieden (POV) op de kaart.'
+                  : 'Klik op een gebouw of omcirkeld gebied (POV) voor details, bewoners en gevonden sporen.'}
               </p>
             </div>
             <span className="text-xs font-mono text-slate-500 dark:text-slate-400">
@@ -624,8 +892,30 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
           <div
             className="relative select-none rounded-lg overflow-hidden border border-slate-300 dark:border-slate-700"
             style={{ minWidth: Math.max(680, mapCols * 30) }}
-            onMouseLeave={() => setIsPainting(false)}
-            onMouseUp={() => setIsPainting(false)}
+            onMouseMove={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              if (rect.width <= 0 || rect.height <= 0) return;
+              const relX = Math.max(0, Math.min(0.9999, (e.clientX - rect.left) / rect.width));
+              const relY = Math.max(0, Math.min(0.9999, (e.clientY - rect.top) / rect.height));
+              const tx = Math.floor(relX * mapCols);
+              const ty = Math.floor(relY * mapRows);
+              setHoveredTile((prev) =>
+                prev && prev.x === tx && prev.y === ty ? prev : { x: tx, y: ty }
+              );
+            }}
+            onMouseLeave={() => {
+              setIsPainting(false);
+              setHoveredTile(null);
+              if (placeMode === 'zone' && zoneDrawStart) {
+                commitZoneDraw();
+              }
+            }}
+            onMouseUp={() => {
+              setIsPainting(false);
+              if (placeMode === 'zone' && zoneDrawStart) {
+                commitZoneDraw();
+              }
+            }}
           >
             {/* Terrain Layer */}
             <div
@@ -645,16 +935,26 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
                     key={idx}
                     onMouseDown={() => {
                       if (!editable) return;
+                      if (placeMode === 'zone') {
+                        setZoneDrawStart({ x, y });
+                        setZoneDrawCurrent({ x, y });
+                        return;
+                      }
                       setIsPainting(true);
                       handleTileAction(x, y);
                     }}
                     onMouseEnter={() => {
-                      if (editable && isPainting && paintTerrain) {
+                      if (!editable) return;
+                      if (placeMode === 'zone' && zoneDrawStart) {
+                        setZoneDrawCurrent({ x, y });
+                        return;
+                      }
+                      if (isPainting && paintTerrain) {
                         handleTileAction(x, y);
                       }
                     }}
                     className={`border-[0.5px] ${meta.lightBg} dark:${meta.darkBg.split(' ')[0]} ${
-                      editable && (paintTerrain || placingNew || movingLocId)
+                      editable && (paintTerrain || placeMode || movingLocId)
                         ? 'cursor-crosshair hover:brightness-110'
                         : ''
                     }`}
@@ -663,24 +963,100 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
               })}
             </div>
 
-            {/* Buildings / Locations Overlay */}
+            {/* Layer 2: Circled Areas / POV Zones (behind buildings) */}
             <div
-              className="absolute inset-0 pointer-events-none grid"
+              className="absolute inset-0 pointer-events-none grid z-[5]"
               style={{
                 gridTemplateColumns: `repeat(${mapCols}, minmax(0, 1fr))`,
                 gridTemplateRows: `repeat(${mapRows}, 34px)`,
               }}
             >
-              {caseFile.locations.map((loc) => {
+              {zoneLocations.map((zone) => {
+                const isSelected = zone.id === selectedLocId;
+                const isDimmed = !editable && !matchingIds.has(zone.id);
+                const CatIcon = CATEGORY_META[zone.category]?.Icon ?? CircleDashed;
+                const colorMeta =
+                  ZONE_COLOR_META[zone.zoneColor ?? 'emerald'] ??
+                  ZONE_COLOR_META.emerald;
+                return (
+                  <button
+                    key={zone.id}
+                    type="button"
+                    onClick={() => {
+                      if (isInteractiveOverlayDisabled) return;
+                      setSelectedLocId(zone.id);
+                    }}
+                    style={{
+                      gridColumn: `${zone.x + 1} / span ${zone.width}`,
+                      gridRow: `${zone.y + 1} / span ${zone.height}`,
+                    }}
+                    className={`${
+                      isInteractiveOverlayDisabled
+                        ? 'pointer-events-none'
+                        : 'pointer-events-auto'
+                    } relative m-1 rounded-[46%] border-2 border-dashed flex items-start justify-center p-1.5 transition-all ${
+                      colorMeta.fillAndBorder
+                    } ${isSelected ? `${colorMeta.selectedRing} z-[8]` : 'hover:brightness-110'} ${
+                      isDimmed ? 'opacity-20' : 'opacity-100'
+                    }`}
+                  >
+                    <span
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-semibold shadow-sm max-w-full truncate ${colorMeta.badge}`}
+                    >
+                      <CatIcon className="w-3 h-3 shrink-0" />
+                      <span className="font-mono shrink-0">{zone.code}</span>
+                      <span className="truncate">{zone.name}</span>
+                    </span>
+                  </button>
+                );
+              })}
+
+              {/* Live preview while dragging a new circled POV zone */}
+              {placeMode === 'zone' && zonePreviewRect && (
+                <div
+                  style={{
+                    gridColumn: `${zonePreviewRect.x + 1} / span ${zonePreviewRect.width}`,
+                    gridRow: `${zonePreviewRect.y + 1} / span ${zonePreviewRect.height}`,
+                  }}
+                  className="pointer-events-none m-1 rounded-[46%] border-2 border-dashed border-sky-400 bg-sky-500/20 flex items-center justify-center z-20"
+                >
+                  <span className="px-2 py-0.5 rounded bg-sky-600 text-white text-[10px] font-mono font-semibold">
+                    POV {zonePreviewRect.width}×{zonePreviewRect.height}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Layer 3: Solid Buildings Overlay (above circled POV zones) */}
+            <div
+              className="absolute inset-0 pointer-events-none grid z-10"
+              style={{
+                gridTemplateColumns: `repeat(${mapCols}, minmax(0, 1fr))`,
+                gridTemplateRows: `repeat(${mapRows}, 34px)`,
+              }}
+            >
+              {buildingLocations.map((loc) => {
                 const isSelected = loc.id === selectedLocId;
                 const isDimmed = !editable && !matchingIds.has(loc.id);
                 const CatIcon = CATEGORY_META[loc.category]?.Icon ?? Building2;
+                const colorTheme = loc.zoneColor
+                  ? BUILDING_COLOR_META[loc.zoneColor]
+                  : undefined;
+                const cardClasses = isSelected
+                  ? colorTheme?.selectedCard ??
+                    'bg-emerald-600 text-white border-emerald-300 ring-2 ring-emerald-400/60 z-20'
+                  : colorTheme?.card ??
+                    'bg-white/95 dark:bg-[#131B26]/95 text-slate-900 dark:text-slate-100 border-slate-400 dark:border-slate-600 hover:border-emerald-400';
+                const codeClasses = isSelected
+                  ? colorTheme?.selectedCode ?? 'text-emerald-100'
+                  : colorTheme?.code ?? 'text-emerald-700 dark:text-emerald-400';
+
                 return (
                   <button
                     key={loc.id}
                     type="button"
                     onClick={() => {
-                      if (editable && (paintTerrain || placingNew || movingLocId)) {
+                      if (isInteractiveOverlayDisabled) {
                         handleTileAction(loc.x, loc.y);
                         return;
                       }
@@ -690,19 +1066,15 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
                       gridColumn: `${loc.x + 1} / span ${loc.width}`,
                       gridRow: `${loc.y + 1} / span ${loc.height}`,
                     }}
-                    className={`pointer-events-auto m-0.5 rounded-md border px-2 py-1 flex flex-col justify-between text-left transition-all overflow-hidden ${
-                      isSelected
-                        ? 'bg-emerald-600 text-white border-emerald-300 ring-2 ring-emerald-400/60 z-10'
-                        : 'bg-white/95 dark:bg-[#131B26]/95 text-slate-900 dark:text-slate-100 border-slate-400 dark:border-slate-600 hover:border-emerald-400'
-                    } ${isDimmed ? 'opacity-25' : 'opacity-100'}`}
+                    className={`${
+                      placeMode === 'zone' ? 'pointer-events-none' : 'pointer-events-auto'
+                    } m-0.5 rounded-md border px-2 py-1 flex flex-col justify-between text-left transition-all overflow-hidden ${cardClasses} ${
+                      isDimmed ? 'opacity-25' : 'opacity-100'
+                    }`}
                   >
                     <div className="flex items-center justify-between gap-1">
                       <span
-                        className={`font-mono text-[10px] leading-none truncate ${
-                          isSelected
-                            ? 'text-emerald-100'
-                            : 'text-emerald-700 dark:text-emerald-400'
-                        }`}
+                        className={`font-mono text-[10px] leading-none truncate ${codeClasses}`}
                       >
                         {loc.code}
                       </span>
@@ -715,6 +1087,59 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
                 );
               })}
             </div>
+
+            {/* Layer 4: Hover Tooltip for Location Name & Type */}
+            {hoveredTile &&
+              hoveredLocations.length > 0 &&
+              !isPainting &&
+              !zoneDrawStart && (
+                <div
+                  role="tooltip"
+                  style={{
+                    left: `${((hoveredTile.x + 0.5) / mapCols) * 100}%`,
+                    top:
+                      hoveredTile.y <= 1
+                        ? `calc(${((hoveredTile.y + 1) / mapRows) * 100}% + 6px)`
+                        : `calc(${(hoveredTile.y / mapRows) * 100}% - 6px)`,
+                  }}
+                  className={`pointer-events-none absolute z-30 w-max max-w-[260px] rounded-lg border border-slate-700/90 bg-slate-900/95 px-3 py-2 text-left text-white shadow-xl backdrop-blur-xs ${
+                    hoveredTile.x <= 2
+                      ? 'translate-x-0'
+                      : hoveredTile.x >= mapCols - 3
+                      ? '-translate-x-full'
+                      : '-translate-x-1/2'
+                  } ${hoveredTile.y <= 1 ? '' : '-translate-y-full'}`}
+                >
+                  <div className="space-y-1.5">
+                    {hoveredLocations.map((loc, idx) => {
+                      const kind = getLocationKind(loc);
+                      const catLabel = CATEGORY_META[loc.category]?.label ?? 'Locatie';
+                      const typeLabel =
+                        kind === 'zone'
+                          ? `Gebied (POV) · ${catLabel}`
+                          : `Gebouw · ${catLabel}`;
+                      return (
+                        <div
+                          key={loc.id}
+                          className={
+                            idx > 0 ? 'pt-1.5 border-t border-slate-700/80' : undefined
+                          }
+                        >
+                          <div className="flex items-center gap-1.5 text-[11px] font-semibold leading-tight text-white">
+                            <span className="font-mono text-[10px] text-emerald-400 shrink-0">
+                              {loc.code}
+                            </span>
+                            <span className="truncate">{loc.name}</span>
+                          </div>
+                          <div className="text-[10px] text-slate-300 mt-0.5">
+                            Type: {typeLabel}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
           </div>
 
           {/* Map Legend */}
@@ -729,6 +1154,10 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
                 <span>{TERRAIN_META[t].label}</span>
               </div>
             ))}
+            <div className="inline-flex items-center gap-1.5">
+              <span className="w-4 h-3 rounded-full border-2 border-dashed border-emerald-500 bg-emerald-500/15" />
+              <span>Omcirkeld gebied (POV)</span>
+            </div>
           </div>
         </div>
 
@@ -738,10 +1167,10 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
             <div className="py-12 text-center">
               <MapPin className="w-8 h-8 text-slate-400 mx-auto mb-2" />
               <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                Geen locatie geselecteerd
+                Geen locatie of gebied geselecteerd
               </p>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                Klik op een gebouw op de kaart om details te bekijken.
+                Klik op een gebouw of omcirkeld gebied op de kaart om details te bekijken.
               </p>
             </div>
           ) : editable ? (
@@ -749,10 +1178,11 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
               <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-200 dark:border-slate-800">
                 <div>
                   <span className="font-mono text-xs text-emerald-600 dark:text-emerald-400">
-                    {selectedLocation.code}
+                    {selectedLocation.code} ·{' '}
+                    {selectedKind === 'zone' ? 'Gebied / POV' : 'Gebouw'}
                   </span>
                   <h4 className="text-base font-bold text-slate-900 dark:text-white">
-                    Locatie bewerken
+                    {selectedKind === 'zone' ? 'Gebied (POV) bewerken' : 'Gebouw bewerken'}
                   </h4>
                 </div>
                 <div className="flex items-center gap-1.5">
@@ -761,7 +1191,7 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
                     onClick={() => {
                       setMovingLocId(selectedLocation.id);
                       setPaintTerrain(null);
-                      setPlacingNew(false);
+                      setPlaceMode(null);
                     }}
                     className={`px-2.5 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
                       movingLocId === selectedLocation.id
@@ -780,6 +1210,43 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
                     <Trash2 className="w-4 h-4" />
                   </button>
                 </div>
+              </div>
+
+              {/* Type switcher: Building vs Circled POV Zone */}
+              <div className="grid grid-cols-2 gap-1.5 p-1 rounded-lg bg-slate-100 dark:bg-[#090D12] border border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() =>
+                    updateSelectedLocation({
+                      kind: 'building',
+                    })
+                  }
+                  className={`inline-flex items-center justify-center gap-1.5 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                    selectedKind === 'building'
+                      ? 'bg-white dark:bg-[#17202B] text-slate-900 dark:text-white shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                  }`}
+                >
+                  <Building2 className="w-3.5 h-3.5" />
+                  <span>Gebouw</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    updateSelectedLocation({
+                      kind: 'zone',
+                      zoneColor: selectedLocation.zoneColor ?? 'emerald',
+                    })
+                  }
+                  className={`inline-flex items-center justify-center gap-1.5 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                    selectedKind === 'zone'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                  }`}
+                >
+                  <CircleDashed className="w-3.5 h-3.5" />
+                  <span>Gebied (POV)</span>
+                </button>
               </div>
 
               <div className="grid grid-cols-3 gap-3">
@@ -828,34 +1295,161 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
                     ))}
                   </select>
                 </div>
-                <div>
-                  <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
-                    Grootte (B×H)
-                  </label>
-                  <select
-                    value={`${selectedLocation.width}x${selectedLocation.height}`}
-                    onChange={(e) => {
-                      const [w, h] = e.target.value.split('x').map(Number);
-                      updateSelectedLocation({
-                        width: w,
-                        height: h,
-                        x: Math.min(selectedLocation.x, Math.max(0, mapCols - w)),
-                        y: Math.min(selectedLocation.y, Math.max(0, mapRows - h)),
-                      });
-                    }}
-                    className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-[#090D12]"
-                  >
-                    <option value="1x1">1×1 tegel</option>
-                    <option value="2x2">2×2 tegels</option>
-                    <option value="3x2">3×2 tegels</option>
-                    <option value="3x3">3×3 tegels</option>
-                  </select>
-                </div>
+
+                {selectedKind === 'building' ? (
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
+                      Grootte (B×H)
+                    </label>
+                    <select
+                      value={`${selectedLocation.width}x${selectedLocation.height}`}
+                      onChange={(e) => {
+                        const [w, h] = e.target.value.split('x').map(Number);
+                        updateSelectedLocation({
+                          width: w,
+                          height: h,
+                          x: Math.min(selectedLocation.x, Math.max(0, mapCols - w)),
+                          y: Math.min(selectedLocation.y, Math.max(0, mapRows - h)),
+                        });
+                      }}
+                      className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-[#090D12]"
+                    >
+                      <option value="1x1">1×1 tegel</option>
+                      <option value="2x2">2×2 tegels</option>
+                      <option value="3x2">3×2 tegels</option>
+                      <option value="3x3">3×3 tegels</option>
+                      {!['1x1', '2x2', '3x2', '3x3'].includes(
+                        `${selectedLocation.width}x${selectedLocation.height}`
+                      ) && (
+                        <option value={`${selectedLocation.width}x${selectedLocation.height}`}>
+                          {selectedLocation.width}×{selectedLocation.height} tegels
+                        </option>
+                      )}
+                    </select>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
+                      Cirkelkleur (POV)
+                    </label>
+                    <div className="flex items-center gap-1.5 pt-1">
+                      {(Object.keys(ZONE_COLOR_META) as ZoneColor[]).map((colorKey) => {
+                        const activeColor =
+                          (selectedLocation.zoneColor ?? 'emerald') === colorKey;
+                        return (
+                          <button
+                            key={colorKey}
+                            type="button"
+                            title={ZONE_COLOR_META[colorKey].label}
+                            onClick={() => updateSelectedLocation({ zoneColor: colorKey })}
+                            className={`w-6 h-6 rounded-full ${
+                              ZONE_COLOR_META[colorKey].swatch
+                            } transition-transform ${
+                              activeColor
+                                ? 'ring-2 ring-offset-2 ring-slate-900 dark:ring-white dark:ring-offset-[#0F151D] scale-110'
+                                : 'opacity-70 hover:opacity-100'
+                            }`}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
+
+              {selectedKind === 'building' && (
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5">
+                    Gebouwkleur
+                  </label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      title="Standaard"
+                      onClick={() => updateSelectedLocation({ zoneColor: undefined })}
+                      className={`px-2.5 py-1 text-[11px] font-medium rounded-lg border transition-colors ${
+                        !selectedLocation.zoneColor
+                          ? 'border-emerald-500 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                          : 'border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-[#090D12] text-slate-600 dark:text-slate-400 hover:border-slate-400'
+                      }`}
+                    >
+                      Standaard
+                    </button>
+                    {(Object.keys(ZONE_COLOR_META) as ZoneColor[]).map((colorKey) => {
+                      const activeColor = selectedLocation.zoneColor === colorKey;
+                      return (
+                        <button
+                          key={colorKey}
+                          type="button"
+                          title={BUILDING_COLOR_META[colorKey].label}
+                          aria-label={`Kleur ${BUILDING_COLOR_META[colorKey].label}`}
+                          onClick={() => updateSelectedLocation({ zoneColor: colorKey })}
+                          className={`w-6 h-6 rounded-full ${
+                            ZONE_COLOR_META[colorKey].swatch
+                          } transition-transform ${
+                            activeColor
+                              ? 'ring-2 ring-offset-2 ring-slate-900 dark:ring-white dark:ring-offset-[#0F151D] scale-110'
+                              : 'opacity-75 hover:opacity-100'
+                          }`}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {selectedKind === 'zone' && (
+                <div className="grid grid-cols-2 gap-3 p-3 rounded-lg bg-slate-50 dark:bg-[#090D12] border border-slate-200 dark:border-slate-800">
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-600 dark:text-slate-400 mb-1">
+                      Breedte (tegels)
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={mapCols}
+                      value={selectedLocation.width}
+                      onChange={(e) => {
+                        const w = Math.max(
+                          1,
+                          Math.min(mapCols, Number(e.target.value) || 1)
+                        );
+                        updateSelectedLocation({
+                          width: w,
+                          x: Math.min(selectedLocation.x, Math.max(0, mapCols - w)),
+                        });
+                      }}
+                      className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0F151D]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-600 dark:text-slate-400 mb-1">
+                      Hoogte (tegels)
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={mapRows}
+                      value={selectedLocation.height}
+                      onChange={(e) => {
+                        const h = Math.max(
+                          1,
+                          Math.min(mapRows, Number(e.target.value) || 1)
+                        );
+                        updateSelectedLocation({
+                          height: h,
+                          y: Math.min(selectedLocation.y, Math.max(0, mapRows - h)),
+                        });
+                      }}
+                      className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0F151D]"
+                    />
+                  </div>
+                </div>
+              )}
 
               <div>
                 <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
-                  Adres
+                  {selectedKind === 'zone' ? 'Ligging / Sector' : 'Adres'}
                 </label>
                 <input
                   type="text"
@@ -915,7 +1509,9 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
             <div className="space-y-4">
               <div className="pb-3 border-b border-slate-200 dark:border-slate-800">
                 <div className="text-xs font-mono text-emerald-600 dark:text-emerald-400">
-                  {selectedLocation.code} · {CATEGORY_META[selectedLocation.category]?.label}
+                  {selectedLocation.code} ·{' '}
+                  {selectedKind === 'zone' ? 'Omcirkeld gebied (POV)' : 'Gebouw'} ·{' '}
+                  {CATEGORY_META[selectedLocation.category]?.label ?? 'Locatie'}
                 </div>
                 <h4 className="text-lg font-bold text-slate-900 dark:text-white mt-0.5">
                   {selectedLocation.name}
@@ -946,7 +1542,7 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
                 </h5>
                 {linkedPersons.length === 0 ? (
                   <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Geen geregistreerde personen op dit adres.
+                    Geen geregistreerde personen op deze plek.
                   </p>
                 ) : (
                   <div className="space-y-2">
@@ -971,7 +1567,7 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
 
               <div>
                 <h5 className="text-xs font-semibold text-slate-800 dark:text-slate-200 mb-2">
-                  Bewijsstukken op deze locatie ({linkedEvidence.length})
+                  Bewijsstukken op deze plek ({linkedEvidence.length})
                 </h5>
                 {linkedEvidence.length === 0 ? (
                   <p className="text-xs text-slate-500 dark:text-slate-400">

@@ -2,6 +2,8 @@ import React, { useMemo, useState } from 'react';
 import {
   Check,
   Copy,
+  Database,
+  Download,
   Eraser,
   Eye,
   EyeOff,
@@ -22,6 +24,7 @@ import {
   UserPlus,
   Users,
 } from 'lucide-react';
+import type { BackupBundle } from '../firebaseStore.ts';
 import {
   FP_COLS,
   FP_ROWS,
@@ -78,6 +81,10 @@ interface MakerStudioProps {
   onApplyCommunity: (community: CommunityTemplate) => void;
   onCreateCaseFromCommunity: (community: CommunityTemplate) => Promise<void>;
   onDeleteCommunity: (communityId: string) => Promise<void>;
+  onExportBackup?: () => BackupBundle;
+  onImportBackup?: (
+    bundle: BackupBundle
+  ) => Promise<{ casesAdded: number; mapsAdded: number; communitiesAdded: number }>;
 }
 
 const PRESET_PORTRAITS = [
@@ -124,6 +131,8 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
   onApplyCommunity,
   onCreateCaseFromCommunity,
   onDeleteCommunity,
+  onExportBackup,
+  onImportBackup,
 }) => {
   const [copiedCode, setCopiedCode] = useState(false);
   const [selectedPersonId, setSelectedPersonId] = useState<string>(
@@ -148,6 +157,8 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
   const [communityBusy, setCommunityBusy] = useState(false);
   const [confirmDeleteCommunity, setConfirmDeleteCommunity] = useState(false);
   const [communityMessage, setCommunityMessage] = useState<string | null>(null);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupMessage, setBackupMessage] = useState<string | null>(null);
 
   // Stamp creator controls
   const [stampSourcePersonId, setStampSourcePersonId] = useState<string>(
@@ -908,6 +919,95 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
                 </div>
               )}
             </div>
+
+            {(onExportBackup || onImportBackup) && (
+              <div className="p-5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0F151D] space-y-3">
+                <div className="flex items-start gap-2">
+                  <Database className="w-4 h-4 text-sky-500 mt-0.5 shrink-0" />
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                      Cloud &amp; Backup (GitHub-veilig)
+                    </h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
+                      Alle kaarten, dossiers en communities staan in Cloud Firestore en blijven
+                      behouden bij een GitHub-upload. Maak optioneel een extra JSON-kopie.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {onExportBackup && (
+                    <button
+                      type="button"
+                      disabled={backupBusy}
+                      onClick={() => {
+                        const bundle = onExportBackup();
+                        const blob = new Blob([JSON.stringify(bundle, null, 2)], {
+                          type: 'application/json',
+                        });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `teiscomysterics-backup-${new Date()
+                          .toISOString()
+                          .slice(0, 10)}.json`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                        setBackupMessage('Backup gedownload.');
+                        setTimeout(() => setBackupMessage(null), 3500);
+                      }}
+                      className="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 disabled:opacity-50"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Backup opslaan</span>
+                    </button>
+                  )}
+
+                  {onImportBackup && (
+                    <label className="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-sky-600 hover:bg-sky-500 text-white cursor-pointer">
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>{backupBusy ? 'Importeren...' : 'Backup laden'}</span>
+                      <input
+                        type="file"
+                        accept=".json,application/json"
+                        className="sr-only"
+                        disabled={backupBusy}
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          e.target.value = '';
+                          if (!file) return;
+                          setBackupBusy(true);
+                          setBackupMessage(null);
+                          try {
+                            const text = await file.text();
+                            const parsed = JSON.parse(text) as BackupBundle;
+                            const res = await onImportBackup(parsed);
+                            setBackupMessage(
+                              `Hersteld: ${res.casesAdded} dossiers, ${res.mapsAdded} kaarten, ${res.communitiesAdded} communities toegevoegd.`
+                            );
+                          } catch (err) {
+                            setBackupMessage(
+                              err instanceof Error
+                                ? err.message
+                                : 'Ongeldig backup-bestand.'
+                            );
+                          } finally {
+                            setBackupBusy(false);
+                            setTimeout(() => setBackupMessage(null), 5000);
+                          }
+                        }}
+                      />
+                    </label>
+                  )}
+                </div>
+
+                {backupMessage && (
+                  <div className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                    {backupMessage}
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="p-6 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0F151D] space-y-4">
               <h3 className="text-sm font-bold text-slate-900 dark:text-white">

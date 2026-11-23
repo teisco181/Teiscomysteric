@@ -35,13 +35,21 @@ export type LocationCategory =
   | 'harbor'
   | 'tavern'
   | 'landmark'
-  | 'alley';
+  | 'alley'
+  | 'park'
+  | 'airport'
+  | 'district';
+
+export type MapLocationKind = 'building' | 'zone';
+export type ZoneColor = 'emerald' | 'sky' | 'amber' | 'rose' | 'violet';
 
 export interface MapLocation {
   id: string;
   code: string;
   name: string;
   category: LocationCategory;
+  kind?: MapLocationKind;
+  zoneColor?: ZoneColor;
   x: number;
   y: number;
   width: number;

@@ -29,6 +29,7 @@ import {
   type AuthUser,
   type CaseFile,
   type CommunityTemplate,
+  type MapLocation,
   type MapTemplate,
   type PlayerNote,
   type TerrainType,
@@ -122,6 +123,34 @@ function sanitizeCaseForPlayer(c: CaseFile): CaseFile {
   };
 }
 
+function serializeLocations(locations: unknown): MapLocation[] {
+  if (!Array.isArray(locations)) return [];
+  return locations.slice(0, 100).map((raw) => {
+    const loc = (raw ?? {}) as MapLocation;
+    const base: MapLocation = {
+      id: String(loc.id ?? `loc-${Date.now().toString(36)}`),
+      code: clampStr(loc.code ?? 'LOC-01', 32),
+      name: clampStr(loc.name ?? 'Locatie', 140),
+      category: loc.category ?? 'house',
+      x: Math.max(0, Math.floor(Number(loc.x ?? 0))),
+      y: Math.max(0, Math.floor(Number(loc.y ?? 0))),
+      width: Math.max(1, Math.floor(Number(loc.width ?? 1))),
+      height: Math.max(1, Math.floor(Number(loc.height ?? 1))),
+      address: clampStr(loc.address ?? '', 200),
+      description: clampStr(loc.description ?? '', 2000),
+      publicNote: clampStr(loc.publicNote ?? '', 2000),
+      visibleToPlayers: loc.visibleToPlayers !== false,
+    };
+    if (loc.kind === 'zone' || loc.kind === 'building') {
+      base.kind = loc.kind;
+    }
+    if (loc.zoneColor) {
+      base.zoneColor = loc.zoneColor;
+    }
+    return base;
+  });
+}
+
 function serializeCaseDoc(
   caseFile: CaseFile,
   ownerId: string,
@@ -143,7 +172,7 @@ function serializeCaseDoc(
     mapCols: Math.max(8, Math.min(48, Math.floor(caseFile.mapCols || MAP_COLS))),
     mapRows: Math.max(6, Math.min(36, Math.floor(caseFile.mapRows || MAP_ROWS))),
     terrain: Array.isArray(caseFile.terrain) ? caseFile.terrain.slice(0, 1728) : [],
-    locations: Array.isArray(caseFile.locations) ? caseFile.locations.slice(0, 100) : [],
+    locations: serializeLocations(caseFile.locations),
     persons: Array.isArray(caseFile.persons) ? caseFile.persons.slice(0, 60) : [],
     evidence: Array.isArray(caseFile.evidence) ? caseFile.evidence.slice(0, 100) : [],
     createdAt: existingCreatedAt ?? serverTimestamp(),
@@ -303,60 +332,186 @@ export async function ensureUserProfile(fbUser: FirebaseUser): Promise<AuthUser>
 
 export async function ensureStarterSeedData(adminUid: string): Promise<void> {
   try {
-    const casesSnap = await getDocs(collection(db, 'cases'));
-    if (!casesSnap.empty) return;
+    const [casesSnap, mapsSnap, commsSnap] = await Promise.all([
+      getDocs(collection(db, 'cases')),
+      getDocs(collection(db, 'mapTemplates')),
+      getDocs(collection(db, 'communities')),
+    ]);
+
+    if (!casesSnap.empty && !mapsSnap.empty && !commsSnap.empty) return;
 
     const starter = createStarterCase();
     const mapTemplate = createStarterMapTemplate(starter);
     const community = createStarterCommunity(starter);
 
     const batch = writeBatch(db);
-    const casePayload = serializeCaseDoc(starter, adminUid);
-    const publishedPayload = serializeCaseDoc(sanitizeCaseForPlayer(starter), adminUid);
+    let hasWrites = false;
 
-    batch.set(doc(db, 'cases', starter.id), casePayload);
-    batch.set(doc(db, 'publishedCases', starter.id), publishedPayload);
-    batch.set(doc(db, 'caseCodes', codeLookupId(starter.joinCode ?? starter.code)), {
-      caseId: starter.id,
-      status: 'published',
-      updatedAt: serverTimestamp(),
-    });
-    batch.set(doc(db, 'caseCodes', codeLookupId(starter.id)), {
-      caseId: starter.id,
-      status: 'published',
-      updatedAt: serverTimestamp(),
-    });
-    batch.set(doc(db, 'mapTemplates', mapTemplate.id), {
-      id: mapTemplate.id,
-      ownerId: adminUid,
-      name: mapTemplate.name,
-      townName: mapTemplate.townName,
-      mapCols: mapTemplate.mapCols,
-      mapRows: mapTemplate.mapRows,
-      terrain: mapTemplate.terrain,
-      locations: mapTemplate.locations,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-    batch.set(doc(db, 'communities', community.id), {
-      id: community.id,
-      ownerId: adminUid,
-      name: community.name,
-      description: community.description,
-      townName: community.townName,
-      mapCols: community.mapCols,
-      mapRows: community.mapRows,
-      terrain: community.terrain,
-      locations: community.locations,
-      persons: community.persons,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
+    if (casesSnap.empty) {
+      const casePayload = serializeCaseDoc(starter, adminUid);
+      const publishedPayload = serializeCaseDoc(
+        sanitizeCaseForPlayer(starter),
+        adminUid
+      );
+      batch.set(doc(db, 'cases', starter.id), casePayload);
+      batch.set(doc(db, 'publishedCases', starter.id), publishedPayload);
+      batch.set(
+        doc(db, 'caseCodes', codeLookupId(starter.joinCode ?? starter.code)),
+        {
+          caseId: starter.id,
+          status: 'published',
+          updatedAt: serverTimestamp(),
+        }
+      );
+      batch.set(doc(db, 'caseCodes', codeLookupId(starter.id)), {
+        caseId: starter.id,
+        status: 'published',
+        updatedAt: serverTimestamp(),
+      });
+      hasWrites = true;
+    }
 
-    await batch.commit();
+    if (mapsSnap.empty) {
+      batch.set(doc(db, 'mapTemplates', mapTemplate.id), {
+        id: mapTemplate.id,
+        ownerId: adminUid,
+        name: mapTemplate.name,
+        townName: mapTemplate.townName,
+        mapCols: mapTemplate.mapCols,
+        mapRows: mapTemplate.mapRows,
+        terrain: mapTemplate.terrain,
+        locations: serializeLocations(mapTemplate.locations),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      hasWrites = true;
+    }
+
+    if (commsSnap.empty) {
+      batch.set(doc(db, 'communities', community.id), {
+        id: community.id,
+        ownerId: adminUid,
+        name: community.name,
+        description: community.description,
+        townName: community.townName,
+        mapCols: community.mapCols,
+        mapRows: community.mapRows,
+        terrain: community.terrain,
+        locations: serializeLocations(community.locations),
+        persons: community.persons,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      hasWrites = true;
+    }
+
+    if (hasWrites) {
+      await batch.commit();
+    }
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, 'cases/starter-seed');
   }
+}
+
+export async function migrateLegacyStaticDbToFirestore(
+  user: AuthUser
+): Promise<{ importedCases: number; importedMaps: number; importedNotes: number }> {
+  const result = { importedCases: 0, importedMaps: 0, importedNotes: 0 };
+  if (typeof window === 'undefined' || !window.localStorage) return result;
+
+  const migrationKey = `teiscomysterics_migrated_v2_${user.id}`;
+  try {
+    if (window.localStorage.getItem(migrationKey) === '1') {
+      return result;
+    }
+  } catch {
+    return result;
+  }
+
+  let parsed: {
+    cases?: CaseFile[];
+    mapTemplates?: MapTemplate[];
+    notes?: PlayerNote[];
+  } | null = null;
+  try {
+    const raw = window.localStorage.getItem('teiscomysterics_static_db_v1');
+    if (!raw) {
+      window.localStorage.setItem(migrationKey, '1');
+      return result;
+    }
+    parsed = JSON.parse(raw) as {
+      cases?: CaseFile[];
+      mapTemplates?: MapTemplate[];
+      notes?: PlayerNote[];
+    };
+  } catch {
+    return result;
+  }
+
+  if (!parsed) return result;
+
+  if (user.role === 'admin') {
+    if (Array.isArray(parsed.mapTemplates)) {
+      for (const map of parsed.mapTemplates) {
+        if (!map || !map.id) continue;
+        const safeId = sanitizeId(map.id, 'map');
+        try {
+          const existing = await getDoc(doc(db, 'mapTemplates', safeId));
+          if (!existing.exists()) {
+            await saveMapTemplateToFirestore({ ...map, id: safeId }, user.id);
+            result.importedMaps += 1;
+          }
+        } catch {
+          // Continue migrating remaining maps cleanly
+        }
+      }
+    }
+
+    if (Array.isArray(parsed.cases)) {
+      for (const caseItem of parsed.cases) {
+        if (!caseItem || !caseItem.id) continue;
+        const safeId = sanitizeId(caseItem.id, 'case');
+        try {
+          const existing = await getDoc(doc(db, 'cases', safeId));
+          if (!existing.exists()) {
+            await saveCaseToFirestore({ ...caseItem, id: safeId }, user.id, true);
+            result.importedCases += 1;
+          }
+        } catch {
+          // Continue migrating remaining cases cleanly
+        }
+      }
+    }
+  }
+
+  if (Array.isArray(parsed.notes)) {
+    for (const noteItem of parsed.notes) {
+      if (!noteItem || !noteItem.caseId) continue;
+      const safeCaseId = sanitizeId(noteItem.caseId, 'case');
+      try {
+        const existingNote = await getDoc(
+          doc(db, 'users', user.id, 'notes', safeCaseId)
+        );
+        if (!existingNote.exists()) {
+          await savePlayerNoteToFirestore(user.id, safeCaseId, {
+            ...noteItem,
+            caseId: safeCaseId,
+            userId: user.id,
+          });
+          result.importedNotes += 1;
+        }
+      } catch {
+        // Ignore unavailable notes cleanly
+      }
+    }
+  }
+
+  try {
+    window.localStorage.setItem(migrationKey, '1');
+  } catch {
+    // Ignore storage quota errors
+  }
+  return result;
 }
 
 export function subscribeCases(
@@ -741,7 +896,7 @@ export async function saveMapTemplateToFirestore(
       mapCols: Math.max(8, Math.min(48, Math.floor(payload.mapCols || MAP_COLS))),
       mapRows: Math.max(6, Math.min(36, Math.floor(payload.mapRows || MAP_ROWS))),
       terrain: Array.isArray(payload.terrain) ? payload.terrain.slice(0, 1728) : [],
-      locations: Array.isArray(payload.locations) ? payload.locations.slice(0, 100) : [],
+      locations: serializeLocations(payload.locations),
       createdAt: existingCreatedAt ?? serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
@@ -788,7 +943,7 @@ export async function saveCommunityToFirestore(
       mapCols: Math.max(8, Math.min(48, Math.floor(payload.mapCols || MAP_COLS))),
       mapRows: Math.max(6, Math.min(36, Math.floor(payload.mapRows || MAP_ROWS))),
       terrain: Array.isArray(payload.terrain) ? payload.terrain.slice(0, 1728) : [],
-      locations: Array.isArray(payload.locations) ? payload.locations.slice(0, 100) : [],
+      locations: serializeLocations(payload.locations),
       persons: Array.isArray(payload.persons) ? payload.persons.slice(0, 60) : [],
       createdAt: existingCreatedAt ?? serverTimestamp(),
       updatedAt: serverTimestamp(),
@@ -805,4 +960,60 @@ export async function deleteCommunityFromFirestore(communityId: string): Promise
   } catch (err) {
     handleFirestoreError(err, OperationType.DELETE, `communities/${safeId}`);
   }
+}
+
+export interface BackupBundle {
+  version?: number;
+  exportedAt?: string;
+  theme?: 'dark' | 'light';
+  cases?: CaseFile[];
+  mapTemplates?: MapTemplate[];
+  communities?: CommunityTemplate[];
+}
+
+export async function importBackupToFirestore(
+  bundle: BackupBundle,
+  adminUid: string
+): Promise<{ casesAdded: number; mapsAdded: number; communitiesAdded: number }> {
+  let casesAdded = 0;
+  let mapsAdded = 0;
+  let communitiesAdded = 0;
+
+  if (Array.isArray(bundle.mapTemplates)) {
+    for (const map of bundle.mapTemplates) {
+      if (!map || !map.id) continue;
+      const safeId = sanitizeId(map.id, 'map');
+      const existing = await getDoc(doc(db, 'mapTemplates', safeId));
+      if (!existing.exists()) {
+        await saveMapTemplateToFirestore({ ...map, id: safeId }, adminUid);
+        mapsAdded += 1;
+      }
+    }
+  }
+
+  if (Array.isArray(bundle.communities)) {
+    for (const comm of bundle.communities) {
+      if (!comm || !comm.id) continue;
+      const safeId = sanitizeId(comm.id, 'comm');
+      const existing = await getDoc(doc(db, 'communities', safeId));
+      if (!existing.exists()) {
+        await saveCommunityToFirestore({ ...comm, id: safeId }, adminUid);
+        communitiesAdded += 1;
+      }
+    }
+  }
+
+  if (Array.isArray(bundle.cases)) {
+    for (const c of bundle.cases) {
+      if (!c || !c.id) continue;
+      const safeId = sanitizeId(c.id, 'case');
+      const existing = await getDoc(doc(db, 'cases', safeId));
+      if (!existing.exists()) {
+        await saveCaseToFirestore({ ...c, id: safeId }, adminUid, true);
+        casesAdded += 1;
+      }
+    }
+  }
+
+  return { casesAdded, mapsAdded, communitiesAdded };
 }

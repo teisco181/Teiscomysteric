@@ -14,6 +14,8 @@ import {
   ensureStarterSeedData,
   ensureUserProfile,
   getPlayerNoteFromFirestore,
+  importBackupToFirestore,
+  migrateLegacyStaticDbToFirestore,
   redeemCaseCodeInFirestore,
   saveCaseToFirestore,
   saveCommunityToFirestore,
@@ -23,6 +25,7 @@ import {
   subscribeCases,
   subscribeCommunities,
   subscribeMapTemplates,
+  type BackupBundle,
 } from './firebaseStore.ts';
 import {
   MAP_COLS,
@@ -60,22 +63,48 @@ function generateNextCaseCode(existingCases: CaseFile[]): string {
   return `ZAAK-${String(num).padStart(3, '0')}`;
 }
 
+function readStoredSetting(key: string): string | null {
+  try {
+    return typeof window !== 'undefined' && window.localStorage
+      ? window.localStorage.getItem(key)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredSetting(key: string, value: string): void {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem(key, value);
+    }
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
 export default function App() {
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [theme, setTheme] = useState<'dark' | 'light'>(() =>
+    readStoredSetting('teiscomysterics_theme') === 'light' ? 'light' : 'dark'
+  );
   const [authReady, setAuthReady] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
 
   // Admin can preview as player without logging out
-  const [viewMode, setViewMode] = useState<'maker' | 'player'>('player');
+  const [viewMode, setViewMode] = useState<'maker' | 'player'>(() =>
+    readStoredSetting('teiscomysterics_view_mode') === 'player' ? 'player' : 'maker'
+  );
   const [makerTab, setMakerTab] = useState<MakerTab>('dossier');
   const [playerTab, setPlayerTab] = useState<PlayerTab>('overzicht');
 
   const [cases, setCases] = useState<CaseFile[]>([]);
   const [mapTemplates, setMapTemplates] = useState<MapTemplate[]>([]);
   const [communities, setCommunities] = useState<CommunityTemplate[]>([]);
-  const [activeCaseId, setActiveCaseId] = useState<string>('');
+  const [activeCaseId, setActiveCaseId] = useState<string>(
+    () => readStoredSetting('teiscomysterics_active_case') ?? ''
+  );
   const [draftCase, setDraftCase] = useState<CaseFile | null>(null);
   const [isDirty, setIsDirty] = useState(false);
   const [isSavingCase, setIsSavingCase] = useState(false);
@@ -112,7 +141,7 @@ export default function App() {
     isSavingRef.current = isSavingCase;
   }, [isSavingCase]);
 
-  // Sync Tailwind v4 `.dark` class on <html>
+  // Sync Tailwind v4 `.dark` class on <html> and persist theme preference
   useEffect(() => {
     const root = document.documentElement;
     if (theme === 'dark') {
@@ -120,6 +149,7 @@ export default function App() {
     } else {
       root.classList.remove('dark');
     }
+    writeStoredSetting('teiscomysterics_theme', theme);
   }, [theme]);
 
   const toggleTheme = () => {
@@ -149,7 +179,12 @@ export default function App() {
       try {
         const profile = await ensureUserProfile(fbUser);
         setAuthUser(profile);
-        setViewMode(profile.role === 'admin' ? 'maker' : 'player');
+        if (profile.role === 'admin') {
+          const savedView = readStoredSetting('teiscomysterics_view_mode');
+          setViewMode(savedView === 'player' ? 'player' : 'maker');
+        } else {
+          setViewMode('player');
+        }
       } catch (err) {
         setAuthError(
           err instanceof Error
@@ -183,6 +218,7 @@ export default function App() {
         if (authUser.role === 'admin') {
           await ensureStarterSeedData(authUser.id);
         }
+        await migrateLegacyStaticDbToFirestore(authUser);
         if (cancelled) return;
 
         unsubCases = subscribeCases(
@@ -192,19 +228,31 @@ export default function App() {
             setCases(list);
             setLoadingData(false);
 
-            const currentId = activeCaseIdRef.current;
-            const currentMatch = list.find((c) => c.id === currentId);
+            const preferredId =
+              activeCaseIdRef.current ||
+              readStoredSetting('teiscomysterics_active_case') ||
+              '';
+            const currentMatch = list.find((c) => c.id === preferredId);
             if (!currentMatch) {
               const first = list[0] ?? null;
               draftVersionRef.current += 1;
               setActiveCaseId(first?.id ?? '');
+              if (first?.id) {
+                writeStoredSetting('teiscomysterics_active_case', first.id);
+              }
               setDraftCase(first);
               latestDraftRef.current = first;
               setIsDirty(false);
               isDirtyRef.current = false;
-            } else if (!isDirtyRef.current && !isSavingRef.current) {
-              setDraftCase(currentMatch);
-              latestDraftRef.current = currentMatch;
+            } else {
+              if (activeCaseIdRef.current !== currentMatch.id) {
+                setActiveCaseId(currentMatch.id);
+                activeCaseIdRef.current = currentMatch.id;
+              }
+              if (!isDirtyRef.current && !isSavingRef.current) {
+                setDraftCase(currentMatch);
+                latestDraftRef.current = currentMatch;
+              }
             }
           },
           (err) => {
@@ -290,6 +338,7 @@ export default function App() {
     draftVersionRef.current += 1;
     setActiveCaseId(found.id);
     activeCaseIdRef.current = found.id;
+    writeStoredSetting('teiscomysterics_active_case', found.id);
     setDraftCase(found);
     latestDraftRef.current = found;
     setIsDirty(false);
@@ -749,7 +798,10 @@ export default function App() {
               <div className="flex items-center gap-1 p-0.5 rounded-lg bg-white dark:bg-[#0F151D] border border-slate-200 dark:border-slate-800">
                 <button
                   type="button"
-                  onClick={() => setViewMode('maker')}
+                  onClick={() => {
+                    setViewMode('maker');
+                    writeStoredSetting('teiscomysterics_view_mode', 'maker');
+                  }}
                   className={`px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
                     viewMode === 'maker'
                       ? 'bg-emerald-600 text-white'
@@ -760,7 +812,10 @@ export default function App() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setViewMode('player')}
+                  onClick={() => {
+                    setViewMode('player');
+                    writeStoredSetting('teiscomysterics_view_mode', 'player');
+                  }}
                   className={`px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
                     viewMode === 'player'
                       ? 'bg-sky-600 text-white'
@@ -886,6 +941,21 @@ export default function App() {
             onApplyCommunity={handleApplyCommunity}
             onCreateCaseFromCommunity={handleCreateCaseFromCommunity}
             onDeleteCommunity={handleDeleteCommunity}
+            onExportBackup={() => ({
+              version: 1,
+              exportedAt: new Date().toISOString(),
+              theme,
+              cases,
+              mapTemplates,
+              communities,
+            })}
+            onImportBackup={async (bundle: BackupBundle) => {
+              const summary = await importBackupToFirestore(bundle, authUser.id);
+              if (bundle.theme === 'dark' || bundle.theme === 'light') {
+                setTheme(bundle.theme);
+              }
+              return summary;
+            }}
           />
         ) : (
           <PlayerPortal
