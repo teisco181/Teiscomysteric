@@ -1,6 +1,23 @@
 import React, { useState } from 'react';
-import { LogIn, Moon, Shield, Sun } from 'lucide-react';
-import { signInWithGoogleAccount } from '../firebaseStore.ts';
+import {
+  Eye,
+  EyeOff,
+  KeyRound,
+  LogIn,
+  Mail,
+  Moon,
+  Shield,
+  Sun,
+  User,
+  UserPlus,
+} from 'lucide-react';
+import {
+  registerWithEmailAccount,
+  registerWithUsernameAccount,
+  sendResetPasswordForEmail,
+  signInWithGoogleAccount,
+  signInWithIdentifierAndPassword,
+} from '../firebaseStore.ts';
 
 interface AuthPortalProps {
   theme: 'dark' | 'light';
@@ -9,38 +26,120 @@ interface AuthPortalProps {
   externalError?: string | null;
 }
 
+function mapFirebaseAuthError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (
+    msg.includes('auth/invalid-credential') ||
+    msg.includes('auth/wrong-password') ||
+    msg.includes('auth/user-not-found')
+  ) {
+    return 'Onjuiste gebruikersnaam, e-mailadres of wachtwoord.';
+  }
+  if (msg.includes('auth/email-already-in-use')) {
+    return 'Deze gebruikersnaam of dit e-mailadres is al in gebruik. Kies een andere naam of log in.';
+  }
+  if (msg.includes('auth/weak-password')) {
+    return 'Het wachtwoord moet minimaal 6 tekens lang zijn.';
+  }
+  if (msg.includes('auth/invalid-email')) {
+    return 'Vul een geldig e-mailadres of een geldige gebruikersnaam in.';
+  }
+  if (msg.includes('auth/too-many-requests')) {
+    return 'Te veel mislukte pogingen. Wacht even en probeer het daarna opnieuw.';
+  }
+  if (
+    msg.includes('auth/operation-not-allowed') ||
+    msg.includes('auth/admin-restricted-operation')
+  ) {
+    return 'Inloggen met e-mail/wachtwoord is nog niet ingeschakeld in Firebase Console (Authentication → Sign-in method → Email/Password).';
+  }
+  if (msg.includes('popup-closed-by-user')) {
+    return 'Het Google-aanmeldscherm is gesloten voordat het inloggen was voltooid.';
+  }
+  if (msg.includes('unauthorized-domain')) {
+    return 'Dit domein is nog niet toegevoegd onder Geautoriseerde domeinen in Firebase Authentication.';
+  }
+  return err instanceof Error ? err.message : 'Aanmelden is mislukt. Probeer het opnieuw.';
+}
+
 export const AuthPortal: React.FC<AuthPortalProps> = ({
   theme,
   onToggleTheme,
   authLoading = false,
   externalError = null,
 }) => {
+  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [registerMethod, setRegisterMethod] = useState<'username' | 'email'>('username');
+
+  const [identifier, setIdentifier] = useState('');
+  const [registerUsername, setRegisterUsername] = useState('');
+  const [registerEmail, setRegisterEmail] = useState('');
+  const [registerDisplayName, setRegisterDisplayName] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [imgFailed, setImgFailed] = useState(false);
+
+  const handlePasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setNotice(null);
+    setLoading(true);
+    try {
+      if (mode === 'login') {
+        await signInWithIdentifierAndPassword(identifier, password);
+      } else {
+        if (password !== confirmPassword) {
+          throw new Error('De twee wachtwoorden komen niet overeen.');
+        }
+        if (registerMethod === 'username') {
+          await registerWithUsernameAccount(registerUsername, password);
+        } else {
+          await registerWithEmailAccount(registerEmail, password, registerDisplayName);
+        }
+      }
+    } catch (err) {
+      setError(mapFirebaseAuthError(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    setError(null);
+    setNotice(null);
+    setLoading(true);
+    try {
+      await sendResetPasswordForEmail(identifier);
+      setNotice(
+        `Er is een wachtwoord-herstelmail verstuurd naar ${identifier.trim().toLowerCase()}.`
+      );
+    } catch (err) {
+      setError(mapFirebaseAuthError(err));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleGoogleSignIn = async () => {
     setError(null);
+    setNotice(null);
     setLoading(true);
     try {
       await signInWithGoogleAccount();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes('popup-closed-by-user')) {
-        setError('Het Google-aanmeldscherm is gesloten voordat het inloggen was voltooid.');
-      } else if (msg.includes('unauthorized-domain')) {
-        setError(
-          'Dit domein is nog niet toegevoegd onder Geautoriseerde domeinen in Firebase Authentication.'
-        );
-      } else {
-        setError('Inloggen met Google is mislukt. Probeer het opnieuw.');
-      }
+      setError(mapFirebaseAuthError(err));
     } finally {
       setLoading(false);
     }
   };
 
   const activeError = error || externalError;
+  const busy = loading || authLoading;
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-[#080C10] text-slate-900 dark:text-slate-100 transition-colors">
@@ -118,9 +217,9 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
           </div>
         </section>
 
-        {/* Right Google Sign-In Panel */}
+        {/* Right Sign-In & Registration Panel */}
         <section className="lg:col-span-5 flex items-center justify-center p-6 sm:p-10 lg:p-12 forensic-grid-bg">
-          <div className="w-full max-w-md bg-white dark:bg-[#0F151D] border border-slate-200 dark:border-slate-800 rounded-xl p-6 sm:p-8 shadow-sm space-y-6">
+          <div className="w-full max-w-md bg-white dark:bg-[#0F151D] border border-slate-200 dark:border-slate-800 rounded-xl p-6 sm:p-8 shadow-sm space-y-5">
             <div>
               <div className="inline-flex items-center gap-2 text-xs font-mono text-emerald-600 dark:text-emerald-400 mb-2">
                 <Shield className="w-4 h-4" />
@@ -129,10 +228,45 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
               <h2 className="text-xl font-bold text-slate-900 dark:text-white">
                 Aanmelden bij Teiscomysterics
               </h2>
-              <p className="mt-1.5 text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
-                Log in met je Google-account. Alle dossiers, dorpskaarten, communities,
-                vingerafdrukken en persoonlijke aantekeningen worden automatisch opgeslagen.
+              <p className="mt-1 text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                Log in met je gebruikersnaam of e-mailadres en wachtwoord, of kies voor Google.
               </p>
+            </div>
+
+            {/* Mode Switcher: Login vs Register */}
+            <div className="grid grid-cols-2 gap-1 p-1 rounded-lg bg-slate-100 dark:bg-[#090D12] border border-slate-200 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => {
+                  setMode('login');
+                  setError(null);
+                  setNotice(null);
+                }}
+                className={`inline-flex items-center justify-center gap-1.5 py-2 text-xs font-semibold rounded-md transition-colors ${
+                  mode === 'login'
+                    ? 'bg-white dark:bg-[#17202B] text-slate-900 dark:text-white shadow-sm'
+                    : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                <span>Inloggen</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMode('register');
+                  setError(null);
+                  setNotice(null);
+                }}
+                className={`inline-flex items-center justify-center gap-1.5 py-2 text-xs font-semibold rounded-md transition-colors ${
+                  mode === 'register'
+                    ? 'bg-white dark:bg-[#17202B] text-slate-900 dark:text-white shadow-sm'
+                    : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                <span>Account aanmaken</span>
+              </button>
             </div>
 
             {activeError && (
@@ -144,27 +278,207 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
               </div>
             )}
 
+            {notice && (
+              <div
+                role="status"
+                className="p-3 rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-xs text-emerald-700 dark:text-emerald-300"
+              >
+                {notice}
+              </div>
+            )}
+
+            <form onSubmit={handlePasswordSubmit} className="space-y-3.5">
+              {mode === 'login' ? (
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    Gebruikersnaam of e-mailadres
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    autoComplete="username"
+                    value={identifier}
+                    onChange={(e) => setIdentifier(e.target.value)}
+                    placeholder="bijv. detective_jan of naam@voorbeeld.nl"
+                    className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-[#090D12] text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setRegisterMethod('username')}
+                      className={`inline-flex items-center justify-center gap-1.5 py-1.5 px-2.5 text-[11px] font-medium rounded-lg border transition-colors ${
+                        registerMethod === 'username'
+                          ? 'border-emerald-500 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                          : 'border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400'
+                      }`}
+                    >
+                      <User className="w-3.5 h-3.5" />
+                      <span>Met gebruikersnaam</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRegisterMethod('email')}
+                      className={`inline-flex items-center justify-center gap-1.5 py-1.5 px-2.5 text-[11px] font-medium rounded-lg border transition-colors ${
+                        registerMethod === 'email'
+                          ? 'border-emerald-500 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                          : 'border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400'
+                      }`}
+                    >
+                      <Mail className="w-3.5 h-3.5" />
+                      <span>Met e-mailadres</span>
+                    </button>
+                  </div>
+
+                  {registerMethod === 'username' ? (
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                        Kies een gebruikersnaam
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        autoComplete="username"
+                        value={registerUsername}
+                        onChange={(e) => setRegisterUsername(e.target.value)}
+                        placeholder="bijv. detective_jan (min. 3 tekens)"
+                        className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-[#090D12] text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      />
+                    </div>
+                  ) : (
+                    <>
+                      <div>
+                        <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                          Naam (optioneel)
+                        </label>
+                        <input
+                          type="text"
+                          value={registerDisplayName}
+                          onChange={(e) => setRegisterDisplayName(e.target.value)}
+                          placeholder="bijv. Rechercheur Jan"
+                          className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-[#090D12] text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                          E-mailadres
+                        </label>
+                        <input
+                          type="email"
+                          required
+                          autoComplete="email"
+                          value={registerEmail}
+                          onChange={(e) => setRegisterEmail(e.target.value)}
+                          placeholder="naam@voorbeeld.nl"
+                          className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-[#090D12] text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+                    Wachtwoord
+                  </label>
+                  {mode === 'login' && (
+                    <button
+                      type="button"
+                      onClick={handleForgotPassword}
+                      disabled={busy}
+                      className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400 hover:underline disabled:opacity-50"
+                    >
+                      Wachtwoord vergeten?
+                    </button>
+                  )}
+                </div>
+                <div className="relative">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    required
+                    minLength={mode === 'register' ? 6 : 1}
+                    autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder={mode === 'register' ? 'Minimaal 6 tekens' : '••••••••'}
+                    className="w-full pl-3 pr-9 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-[#090D12] text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((prev) => !prev)}
+                    aria-label={showPassword ? 'Wachtwoord verbergen' : 'Wachtwoord tonen'}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                  >
+                    {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              </div>
+
+              {mode === 'register' && (
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    Bevestig wachtwoord
+                  </label>
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    required
+                    minLength={6}
+                    autoComplete="new-password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Herhaal wachtwoord"
+                    className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-[#090D12] text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={busy}
+                className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white transition-colors"
+              >
+                <KeyRound className="w-4 h-4" />
+                <span>
+                  {busy
+                    ? 'Bezig...'
+                    : mode === 'login'
+                      ? 'Inloggen'
+                      : 'Account aanmaken'}
+                </span>
+              </button>
+            </form>
+
+            <div className="relative flex items-center py-1">
+              <div className="flex-grow border-t border-slate-200 dark:border-slate-800" />
+              <span className="mx-3 text-[11px] font-medium text-slate-400">of</span>
+              <div className="flex-grow border-t border-slate-200 dark:border-slate-800" />
+            </div>
+
             <button
               type="button"
               onClick={handleGoogleSignIn}
-              disabled={loading || authLoading}
-              className="w-full inline-flex items-center justify-center gap-2.5 px-4 py-3 text-sm font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white transition-colors"
+              disabled={busy}
+              className="w-full inline-flex items-center justify-center gap-2.5 px-4 py-2.5 text-xs font-semibold rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-[#090D12] text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-60 transition-colors"
             >
-              <LogIn className="w-4 h-4" />
-              <span>
-                {loading || authLoading ? 'Aanmelden...' : 'Inloggen met Google'}
-              </span>
+              <LogIn className="w-4 h-4 text-emerald-500" />
+              <span>Inloggen met Google</span>
             </button>
 
-            <div className="pt-4 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400 space-y-1.5 leading-relaxed">
+            <div className="pt-3 border-t border-slate-200 dark:border-slate-800 text-[11px] text-slate-500 dark:text-slate-400 space-y-1 leading-relaxed">
               <p>
                 <strong className="text-slate-700 dark:text-slate-200">Speler / Rechercheur:</strong>{' '}
-                Na inloggen voer je de toegangscode van het papieren dossier in (bijv.{' '}
+                Maak eenvoudig een account aan met een gebruikersnaam of e-mailadres, en voer daarna
+                de dossiercode in (bijv.{' '}
                 <code className="font-mono text-emerald-600 dark:text-emerald-400">ZAAK-047</code>).
               </p>
               <p>
                 <strong className="text-slate-700 dark:text-slate-200">Beheerder / Maker:</strong>{' '}
-                Het ingestelde beheerdersaccount krijgt automatisch toegang tot de Bouwer Versie.
+                Log in met Google (of stel na Google-login een wachtwoord in om ook met e-mail &amp;
+                wachtwoord in te loggen).
               </p>
             </div>
           </div>

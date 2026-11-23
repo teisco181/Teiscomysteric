@@ -1,6 +1,14 @@
 import {
+  createUserWithEmailAndPassword,
+  EmailAuthProvider,
+  linkWithCredential,
+  reauthenticateWithPopup,
+  sendEmailVerification,
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
+  updateProfile,
   type User as FirebaseUser,
 } from 'firebase/auth';
 import {
@@ -260,9 +268,151 @@ function hydrateCommunity(id: string, data: Record<string, unknown>): CommunityT
   };
 }
 
+const SYNTHETIC_EMAIL_DOMAIN = 'users.teiscomysterics.app';
+let pendingDisplayName: string | null = null;
+
+export function isSyntheticUsernameEmail(email: string | null | undefined): boolean {
+  return Boolean(email && email.toLowerCase().endsWith(`@${SYNTHETIC_EMAIL_DOMAIN}`));
+}
+
+export function normalizeUsernameToEmail(rawUsername: string): string {
+  const clean = rawUsername.trim().toLowerCase();
+  if (
+    clean.length < 3 ||
+    clean.length > 32 ||
+    !/^[a-z0-9._-]+$/.test(clean) ||
+    clean.startsWith('.') ||
+    clean.endsWith('.') ||
+    clean.includes('..')
+  ) {
+    throw new Error(
+      'Gebruik 3–32 tekens voor de gebruikersnaam (alleen letters, cijfers, _, - of . zonder dubbele punten).'
+    );
+  }
+  return `${clean}@${SYNTHETIC_EMAIL_DOMAIN}`;
+}
+
+export function resolveLoginIdentifier(identifier: string): {
+  email: string;
+  isUsername: boolean;
+} {
+  const trimmed = identifier.trim();
+  if (!trimmed) {
+    throw new Error('Vul een gebruikersnaam of e-mailadres in.');
+  }
+  if (trimmed.includes('@')) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+      throw new Error('Vul een geldig e-mailadres in.');
+    }
+    return { email: trimmed.toLowerCase(), isUsername: false };
+  }
+  return { email: normalizeUsernameToEmail(trimmed), isUsername: true };
+}
+
 export async function signInWithGoogleAccount(): Promise<FirebaseUser> {
   const result = await signInWithPopup(auth, googleProvider);
   return result.user;
+}
+
+export async function signInWithIdentifierAndPassword(
+  identifier: string,
+  password: string
+): Promise<FirebaseUser> {
+  if (!password) {
+    throw new Error('Vul je wachtwoord in.');
+  }
+  const { email } = resolveLoginIdentifier(identifier);
+  const result = await signInWithEmailAndPassword(auth, email, password);
+  return result.user;
+}
+
+export async function registerWithUsernameAccount(
+  username: string,
+  password: string
+): Promise<FirebaseUser> {
+  if (password.length < 6) {
+    throw new Error('Het wachtwoord moet minimaal 6 tekens lang zijn.');
+  }
+  const cleanName = username.trim();
+  const email = normalizeUsernameToEmail(cleanName);
+  pendingDisplayName = clampStr(cleanName, 80);
+  try {
+    const result = await createUserWithEmailAndPassword(auth, email, password);
+    await updateProfile(result.user, { displayName: clampStr(cleanName, 80) }).catch(
+      () => undefined
+    );
+    return result.user;
+  } catch (err) {
+    pendingDisplayName = null;
+    throw err;
+  }
+}
+
+export async function registerWithEmailAccount(
+  email: string,
+  password: string,
+  displayName?: string
+): Promise<FirebaseUser> {
+  const trimmedEmail = email.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+    throw new Error('Vul een geldig e-mailadres in.');
+  }
+  if (password.length < 6) {
+    throw new Error('Het wachtwoord moet minimaal 6 tekens lang zijn.');
+  }
+  const chosenName = clampStr(
+    displayName?.trim() || trimmedEmail.split('@')[0] || 'Rechercheur',
+    80
+  );
+  pendingDisplayName = chosenName;
+  try {
+    const result = await createUserWithEmailAndPassword(auth, trimmedEmail, password);
+    await updateProfile(result.user, { displayName: chosenName }).catch(() => undefined);
+    void sendEmailVerification(result.user).catch(() => undefined);
+    return result.user;
+  } catch (err) {
+    pendingDisplayName = null;
+    throw err;
+  }
+}
+
+export async function sendResetPasswordForEmail(identifier: string): Promise<void> {
+  const trimmed = identifier.trim();
+  if (!trimmed.includes('@')) {
+    throw new Error(
+      'Wachtwoordherstel per e-mail werkt alleen voor accounts die met een echt e-mailadres zijn aangemaakt.'
+    );
+  }
+  await sendPasswordResetEmail(auth, trimmed.toLowerCase());
+}
+
+export async function sendVerificationForCurrentUser(): Promise<void> {
+  if (!auth.currentUser || isSyntheticUsernameEmail(auth.currentUser.email)) {
+    throw new Error('Geen geldig e-mailadres gekoppeld aan dit account.');
+  }
+  await sendEmailVerification(auth.currentUser);
+}
+
+export async function linkPasswordToCurrentAccount(password: string): Promise<void> {
+  const current = auth.currentUser;
+  if (!current || !current.email || isSyntheticUsernameEmail(current.email)) {
+    throw new Error('Dit account heeft geen e-mailadres om een wachtwoord aan te koppelen.');
+  }
+  if (password.length < 6) {
+    throw new Error('Het wachtwoord moet minimaal 6 tekens lang zijn.');
+  }
+  const cred = EmailAuthProvider.credential(current.email, password);
+  try {
+    await linkWithCredential(current, cred);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('requires-recent-login')) {
+      await reauthenticateWithPopup(current, googleProvider);
+      await linkWithCredential(current, cred);
+      return;
+    }
+    throw err;
+  }
 }
 
 export async function signOutAccount(): Promise<void> {
@@ -304,8 +454,13 @@ export async function ensureUserProfile(fbUser: FirebaseUser): Promise<AuthUser>
     handleFirestoreError(err, OperationType.GET, `users/${uid}`);
   }
 
+  const consumedPending = pendingDisplayName;
+  pendingDisplayName = null;
   const displayName = clampStr(
-    fbUser.displayName?.trim() || fbUser.email?.split('@')[0] || 'Rechercheur',
+    fbUser.displayName?.trim() ||
+      consumedPending?.trim() ||
+      fbUser.email?.split('@')[0] ||
+      'Rechercheur',
     80
   );
 

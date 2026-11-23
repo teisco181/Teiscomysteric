@@ -2,7 +2,7 @@
 
 ## 1. Data Invariants
 1. **Default Deny**: Any collection or document not explicitly matched is denied (`read, write: if false`).
-2. **Verified Identity**: All mutations require `request.auth != null && request.auth.token.email_verified == true`.
+2. **Authenticated Non-Anonymous Identity & Verified Admin Email**: All mutations require `request.auth != null && request.auth.token.firebase.sign_in_provider != 'anonymous'`. Admin privileges matched via `request.auth.token.email` strictly mandate `request.auth.token.email_verified == true`.
 3. **RBAC / Admin Isolation**:
    - `/cases/{caseId}` (containing `isCulprit` and `creatorSecretNote`) and `/mapTemplates/{mapId}` are readable and writable exclusively by `isAdmin()`.
    - Players cannot self-assign `role: 'admin'` on `/users/{userId}` creation or update.
@@ -17,7 +17,7 @@
 
 ## 2. The "Dirty Dozen" Payloads (Expected: PERMISSION_DENIED)
 1. **Unauthenticated Write**: Creating `/users/attacker/notes/case-1` with `request.auth == null`.
-2. **Unverified Email**: Google/Auth user with `email_verified: false` writing `/users/{uid}`.
+2. **Unverified Admin Email Spoof / Anonymous Write**: Creating `/admins/{uid}` or reading `/cases/{id}` with `email: "teisco181@gmail.com"` and `email_verified: false`, or writing `/users/{uid}` as an anonymous session.
 3. **Privilege Escalation on Create**: Player creating `/users/{uid}` with `role: "admin"`.
 4. **Privilege Escalation on Update**: Player updating `/users/{uid}` changing `role` from `"player"` to `"admin"`.
 5. **Ghost Field Shadow Update**: Player updating `/users/{uid}/notes/case-1` with `{ ..., isVerified: true }`.

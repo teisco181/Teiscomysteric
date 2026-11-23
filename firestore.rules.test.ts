@@ -22,11 +22,11 @@ export const DIRTY_DOZEN_SCENARIOS: DirtyDozenScenario[] = [
   },
   {
     id: 2,
-    name: 'Unverified email user write',
+    name: 'Unverified admin email spoof',
     operation: 'create',
-    path: '/users/unverified_uid',
+    path: '/admins/spoof_uid',
     expected: 'PERMISSION_DENIED',
-    rationale: 'isSignedIn() mandates request.auth.token.email_verified == true.',
+    rationale: 'isAdmin() mandates email_verified == true when checking request.auth.token.email.',
   },
   {
     id: 3,

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
-import { LogOut, Moon, RefreshCw, Shield, Sun, User } from 'lucide-react';
+import { KeyRound, LogOut, MailCheck, Moon, RefreshCw, Shield, Sun, User, X } from 'lucide-react';
 import { AuthPortal } from './components/AuthPortal.tsx';
 import { MakerStudio, type MakerTab } from './components/MakerStudio.tsx';
 import { PlayerCodeGate } from './components/PlayerCodeGate.tsx';
@@ -15,12 +15,15 @@ import {
   ensureUserProfile,
   getPlayerNoteFromFirestore,
   importBackupToFirestore,
+  isSyntheticUsernameEmail,
+  linkPasswordToCurrentAccount,
   migrateLegacyStaticDbToFirestore,
   redeemCaseCodeInFirestore,
   saveCaseToFirestore,
   saveCommunityToFirestore,
   saveMapTemplateToFirestore,
   savePlayerNoteToFirestore,
+  sendVerificationForCurrentUser,
   signOutAccount,
   subscribeCases,
   subscribeCommunities,
@@ -91,6 +94,17 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [accountMeta, setAccountMeta] = useState<{
+    email: string | null;
+    emailVerified: boolean;
+    hasPasswordProvider: boolean;
+  }>({ email: null, emailVerified: false, hasPasswordProvider: false });
+  const [showLinkPasswordModal, setShowLinkPasswordModal] = useState(false);
+  const [linkPasswordValue, setLinkPasswordValue] = useState('');
+  const [linkPasswordConfirm, setLinkPasswordConfirm] = useState('');
+  const [linkPasswordBusy, setLinkPasswordBusy] = useState(false);
+  const [linkPasswordMsg, setLinkPasswordMsg] = useState<string | null>(null);
+  const [verificationMsg, setVerificationMsg] = useState<string | null>(null);
 
   // Admin can preview as player without logging out
   const [viewMode, setViewMode] = useState<'maker' | 'player'>(() =>
@@ -161,6 +175,7 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
       if (!fbUser) {
         setAuthUser(null);
+        setAccountMeta({ email: null, emailVerified: false, hasPasswordProvider: false });
         setCases([]);
         setMapTemplates([]);
         setCommunities([]);
@@ -176,6 +191,11 @@ export default function App() {
 
       setAuthLoading(true);
       setAuthError(null);
+      setAccountMeta({
+        email: fbUser.email,
+        emailVerified: fbUser.emailVerified,
+        hasPasswordProvider: fbUser.providerData.some((p) => p.providerId === 'password'),
+      });
       try {
         const profile = await ensureUserProfile(fbUser);
         setAuthUser(profile);
@@ -827,6 +847,24 @@ export default function App() {
               </div>
             )}
 
+            {accountMeta.email &&
+              !isSyntheticUsernameEmail(accountMeta.email) &&
+              !accountMeta.hasPasswordProvider && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLinkPasswordMsg(null);
+                    setLinkPasswordValue('');
+                    setLinkPasswordConfirm('');
+                    setShowLinkPasswordModal(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0F151D] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors whitespace-nowrap"
+                >
+                  <KeyRound className="w-3.5 h-3.5 text-emerald-500" />
+                  <span>Wachtwoord instellen</span>
+                </button>
+              )}
+
             <button
               type="button"
               onClick={toggleTheme}
@@ -868,6 +906,37 @@ export default function App() {
           })}
         </div>
       </div>
+
+      {accountMeta.email === 'teisco181@gmail.com' &&
+        !accountMeta.emailVerified &&
+        authUser.role !== 'admin' && (
+          <div className="no-print border-b border-amber-500/40 bg-amber-500/10 px-6 py-2.5">
+            <div className="max-w-[1440px] mx-auto flex flex-wrap items-center justify-between gap-3 text-xs text-amber-900 dark:text-amber-200">
+              <span>
+                Beheerdersrechten vereisen een geverifieerd e-mailadres. Klik op de link in je
+                verificatiemail (of log eenmalig in met Google) en herlaad de pagina.
+                {verificationMsg ? ` — ${verificationMsg}` : ''}
+              </span>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await sendVerificationForCurrentUser();
+                    setVerificationMsg('Verificatiemail verzonden.');
+                  } catch (err) {
+                    setVerificationMsg(
+                      err instanceof Error ? err.message : 'Verzenden mislukt.'
+                    );
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-amber-600 hover:bg-amber-500 text-white"
+              >
+                <MailCheck className="w-3.5 h-3.5" />
+                <span>Verificatiemail sturen</span>
+              </button>
+            </div>
+          </div>
+        )}
 
       {/* Main Content Viewport */}
       <main className="no-print flex-1 w-full max-w-[1440px] mx-auto px-4 sm:px-6 py-6">
@@ -985,6 +1054,106 @@ export default function App() {
           caseFile={draftCase}
           onClose={() => setShowPrintModal(false)}
         />
+      )}
+
+      {showLinkPasswordModal && accountMeta.email && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-md rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0F151D] p-6 space-y-4 shadow-xl">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <KeyRound className="w-4 h-4 text-emerald-500" />
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                  Wachtwoord koppelen aan je account
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowLinkPasswordModal(false)}
+                aria-label="Sluit venster"
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+              Stel een wachtwoord in voor <strong className="text-slate-800 dark:text-slate-200">{accountMeta.email}</strong>. Daarna kun je voortaan inloggen met zowel e-mail + wachtwoord als Google op hetzelfde account.
+            </p>
+
+            {linkPasswordMsg && (
+              <div className="p-2.5 rounded-lg border border-sky-500/40 bg-sky-500/10 text-xs text-sky-700 dark:text-sky-300">
+                {linkPasswordMsg}
+              </div>
+            )}
+
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setLinkPasswordMsg(null);
+                if (linkPasswordValue !== linkPasswordConfirm) {
+                  setLinkPasswordMsg('De twee wachtwoorden komen niet overeen.');
+                  return;
+                }
+                setLinkPasswordBusy(true);
+                try {
+                  await linkPasswordToCurrentAccount(linkPasswordValue);
+                  setAccountMeta((prev) => ({ ...prev, hasPasswordProvider: true }));
+                  setShowLinkPasswordModal(false);
+                } catch (err) {
+                  setLinkPasswordMsg(
+                    err instanceof Error ? err.message : 'Wachtwoord instellen mislukt.'
+                  );
+                } finally {
+                  setLinkPasswordBusy(false);
+                }
+              }}
+              className="space-y-3"
+            >
+              <div>
+                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  Nieuw wachtwoord (min. 6 tekens)
+                </label>
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  value={linkPasswordValue}
+                  onChange={(e) => setLinkPasswordValue(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-[#090D12]"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  Herhaal wachtwoord
+                </label>
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  value={linkPasswordConfirm}
+                  onChange={(e) => setLinkPasswordConfirm(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-[#090D12]"
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowLinkPasswordModal(false)}
+                  className="px-3 py-2 text-xs font-medium rounded-lg border border-slate-300 dark:border-slate-700"
+                >
+                  Annuleren
+                </button>
+                <button
+                  type="submit"
+                  disabled={linkPasswordBusy}
+                  className="px-4 py-2 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white"
+                >
+                  {linkPasswordBusy ? 'Opslaan...' : 'Wachtwoord opslaan'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );
