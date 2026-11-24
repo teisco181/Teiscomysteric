@@ -143,29 +143,46 @@ export const PrintableDossierModal: React.FC<PrintableDossierModalProps> = ({
             03. Bekende Betrokkenen &amp; Adressen
           </h2>
           <div className="divide-y divide-slate-200 border border-slate-300 rounded-lg">
-            {caseFile.persons.map((p) => (
-              <div key={p.id} className="p-3.5 flex items-start justify-between gap-4">
-                <div className="space-y-1">
-                  <div className="text-sm font-bold text-slate-900">
-                    {p.name}{' '}
-                    <span className="font-mono text-xs font-normal text-slate-500">
-                      ({p.code} · {p.fingerprintCode})
-                    </span>
+            {caseFile.persons.map((p) => {
+              const workLoc = p.workLocationId
+                ? caseFile.locations.find((l) => l.id === p.workLocationId)
+                : p.workLocationCode
+                ? caseFile.locations.find(
+                    (l) =>
+                      l.code.trim().toUpperCase() ===
+                      p.workLocationCode?.trim().toUpperCase()
+                  )
+                : undefined;
+              return (
+                <div key={p.id} className="p-3.5 flex items-start justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="text-sm font-bold text-slate-900">
+                      {p.name}{' '}
+                      <span className="font-mono text-xs font-normal text-slate-500">
+                        ({p.code} · {p.fingerprintCode})
+                      </span>
+                    </div>
+                    <div className="text-xs text-slate-600">
+                      {p.occupation}
+                      {workLoc
+                        ? ` (Werkplek: ${workLoc.code} — ${workLoc.name})`
+                        : p.workLocationCode
+                        ? ` (Werkplek: ${p.workLocationCode})`
+                        : ''}{' '}
+                      · {p.address} · Status: {p.status}
+                    </div>
+                    <p className="text-xs text-slate-700 leading-relaxed">
+                      <strong>Alibi:</strong> {p.alibi}
+                    </p>
                   </div>
-                  <div className="text-xs text-slate-600">
-                    {p.occupation} · {p.address} · Status: {p.status}
-                  </div>
-                  <p className="text-xs text-slate-700 leading-relaxed">
-                    <strong>Alibi:</strong> {p.alibi}
-                  </p>
+                  {includeSuspectPrints && (
+                    <div className="shrink-0">
+                      <FingerprintGrid matrix={p.fingerprint} cellSize={6} />
+                    </div>
+                  )}
                 </div>
-                {includeSuspectPrints && (
-                  <div className="shrink-0">
-                    <FingerprintGrid matrix={p.fingerprint} cellSize={6} />
-                  </div>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
       </article>

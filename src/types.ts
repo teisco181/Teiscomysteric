@@ -78,6 +78,8 @@ export interface Person {
   occupation: string;
   address: string;
   locationId: string;
+  workLocationId?: string;
+  workLocationCode?: string;
   portraitUrl: string;
   status: PersonStatus;
   alibi: string;

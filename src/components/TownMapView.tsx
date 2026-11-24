@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import {
   Anchor,
   ArrowRight,
+  Briefcase,
   Building2,
   Check,
   CircleDashed,
@@ -27,7 +28,11 @@ import {
   User,
   X,
 } from 'lucide-react';
-import { findLocationByImportCode } from '../utils/personImport.ts';
+import {
+  findLocationByImportCode,
+  resolvePersonHomeLocation,
+  resolvePersonWorkLocation,
+} from '../utils/personImport.ts';
 import {
   MAP_COLS,
   MAP_ROWS,
@@ -46,6 +51,7 @@ import {
 interface TownMapViewProps {
   caseFile: CaseFile;
   editable?: boolean;
+  focusLocationId?: string | null;
   onUpdateCase?: (next: CaseFile) => void;
   onSelectPerson?: (person: Person) => void;
   onSelectEvidence?: (evidence: EvidenceItem) => void;
@@ -308,6 +314,7 @@ function isTileInLocation(
 export const TownMapView: React.FC<TownMapViewProps> = ({
   caseFile,
   editable = false,
+  focusLocationId = null,
   onUpdateCase,
   onSelectPerson,
   onSelectEvidence,
@@ -318,7 +325,9 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
   onDeleteMapTemplate,
 }) => {
   const [selectedLocId, setSelectedLocId] = useState<string | null>(
-    caseFile.locations[0]?.id ?? null
+    focusLocationId && caseFile.locations.some((l) => l.id === focusLocationId)
+      ? focusLocationId
+      : caseFile.locations[0]?.id ?? null
   );
   const [paintTerrain, setPaintTerrain] = useState<TerrainType | null>(null);
   const [placeMode, setPlaceMode] = useState<MapLocationKind | null>(null);
@@ -337,6 +346,12 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
   const [mapNotice, setMapNotice] = useState<string | null>(null);
   const [confirmDeleteMap, setConfirmDeleteMap] = useState(false);
   const [hoveredTile, setHoveredTile] = useState<{ x: number; y: number } | null>(null);
+
+  React.useEffect(() => {
+    if (focusLocationId && caseFile.locations.some((l) => l.id === focusLocationId)) {
+      setSelectedLocId(focusLocationId);
+    }
+  }, [focusLocationId, caseFile.locations]);
 
   const selectedLocation = useMemo(
     () => caseFile.locations.find((l) => l.id === selectedLocId) ?? null,
@@ -359,8 +374,12 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
       if (kindFilter !== 'all' && getLocationKind(loc) !== kindFilter) return false;
       if (categoryFilter !== 'all' && loc.category !== categoryFilter) return false;
       if (!q) return true;
-      const linkedPersons = caseFile.persons.filter((p) => p.locationId === loc.id);
-      const matchesPerson = linkedPersons.some(
+      const associatedPersons = caseFile.persons.filter((p) => {
+        const home = resolvePersonHomeLocation(p, [loc]);
+        const work = resolvePersonWorkLocation(p, [loc]);
+        return home?.id === loc.id || work?.id === loc.id;
+      });
+      const matchesPerson = associatedPersons.some(
         (p) =>
           p.name.toLowerCase().includes(q) ||
           p.occupation.toLowerCase().includes(q)
@@ -637,9 +656,11 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
     onUpdateCase({
       ...caseFile,
       locations: remaining,
-      persons: caseFile.persons.map((p) =>
-        p.locationId === selectedLocation.id ? { ...p, locationId: '' } : p
-      ),
+      persons: caseFile.persons.map((p) => ({
+        ...p,
+        locationId: p.locationId === selectedLocation.id ? '' : p.locationId,
+        workLocationId: p.workLocationId === selectedLocation.id ? '' : (p.workLocationId ?? ''),
+      })),
       evidence: caseFile.evidence.map((ev) =>
         ev.locationId === selectedLocation.id ? { ...ev, locationId: '' } : ev
       ),
@@ -655,6 +676,20 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
         return (
           findLocationByImportCode(p.address, [selectedLocation]).matchedLocation?.id ===
           selectedLocation.id
+        );
+      }
+      return false;
+    });
+  }, [caseFile.persons, selectedLocation]);
+
+  const employeePersons = useMemo(() => {
+    if (!selectedLocation) return [];
+    return caseFile.persons.filter((p) => {
+      if (p.workLocationId === selectedLocation.id) return true;
+      if (!p.workLocationId && p.workLocationCode) {
+        return (
+          findLocationByImportCode(p.workLocationCode, [selectedLocation], 'LOC')
+            .matchedLocation?.id === selectedLocation.id
         );
       }
       return false;
@@ -1806,47 +1841,90 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
                 )}
               </button>
 
-              <div className="pt-3 border-t border-slate-200 dark:border-slate-800">
-                <h5 className="text-xs font-semibold text-slate-800 dark:text-slate-200 mb-2">
-                  {isHouseLocation(selectedLocation)
-                    ? `Inwonenden (${linkedPersons.length})`
-                    : `Gekoppelde personen (${linkedPersons.length})`}
-                </h5>
-                {linkedPersons.length === 0 ? (
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
+              <div className="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-4">
+                <div>
+                  <h5 className="text-xs font-semibold text-slate-800 dark:text-slate-200 mb-2">
                     {isHouseLocation(selectedLocation)
-                      ? 'Nog geen inwonenden gekoppeld aan dit huis.'
-                      : 'Geen gekoppelde personen voor deze locatie.'}
-                  </p>
-                ) : (
-                  <div className="space-y-2">
-                    {linkedPersons.map((p) => (
-                      <button
-                        key={p.id}
-                        type="button"
-                        onClick={() => onSelectPerson?.(p)}
-                        className="w-full text-left p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:border-emerald-500/60 bg-slate-50 dark:bg-[#090D12] transition-colors space-y-1"
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-900 dark:text-white">
-                            <User className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                            <span>{p.name}</span>
-                          </span>
-                          <span className="font-mono text-[10px] text-slate-500 dark:text-slate-400">
-                            {p.code}
-                          </span>
-                        </div>
-                        {isHouseLocation(selectedLocation) && (
-                          <div className="text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
-                            Eén van de inwonenden van {selectedLocation.code} — {selectedLocation.name}
+                      ? `Inwonenden (${linkedPersons.length})`
+                      : `Gekoppelde personen (${linkedPersons.length})`}
+                  </h5>
+                  {linkedPersons.length === 0 ? (
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      {isHouseLocation(selectedLocation)
+                        ? 'Nog geen inwonenden gekoppeld aan dit huis.'
+                        : 'Geen gekoppelde personen voor deze locatie.'}
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {linkedPersons.map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => onSelectPerson?.(p)}
+                          className="w-full text-left p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:border-emerald-500/60 bg-slate-50 dark:bg-[#090D12] transition-colors space-y-1"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-900 dark:text-white">
+                              <User className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                              <span>{p.name}</span>
+                            </span>
+                            <span className="font-mono text-[10px] text-slate-500 dark:text-slate-400">
+                              {p.code}
+                            </span>
                           </div>
-                        )}
-                        <div className="flex items-center justify-between gap-2 pt-0.5 text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
-                          <span>Open persoonlijk document</span>
-                          <ArrowRight className="w-3.5 h-3.5 shrink-0" />
-                        </div>
-                      </button>
-                    ))}
+                          {isHouseLocation(selectedLocation) && (
+                            <div className="text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
+                              Eén van de inwonenden van {selectedLocation.code} — {selectedLocation.name}
+                            </div>
+                          )}
+                          <div className="flex items-center justify-between gap-2 pt-0.5 text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
+                            <span>Open persoonlijk document</span>
+                            <ArrowRight className="w-3.5 h-3.5 shrink-0" />
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {(!isHouseLocation(selectedLocation) || employeePersons.length > 0) && (
+                  <div>
+                    <h5 className="text-xs font-semibold text-slate-800 dark:text-slate-200 mb-2">
+                      Werknemers ({employeePersons.length})
+                    </h5>
+                    {employeePersons.length === 0 ? (
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        Nog geen werknemers gekoppeld aan dit gebouw.
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        {employeePersons.map((p) => (
+                          <button
+                            key={`emp-${p.id}`}
+                            type="button"
+                            onClick={() => onSelectPerson?.(p)}
+                            className="w-full text-left p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:border-sky-500/60 bg-slate-50 dark:bg-[#090D12] transition-colors space-y-1"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-900 dark:text-white">
+                                <Briefcase className="w-3.5 h-3.5 text-sky-500 shrink-0" />
+                                <span>{p.name}</span>
+                              </span>
+                              <span className="font-mono text-[10px] text-slate-500 dark:text-slate-400">
+                                {p.code}
+                              </span>
+                            </div>
+                            <div className="text-[11px] font-medium text-sky-700 dark:text-sky-300">
+                              Werknemer ({p.occupation || 'Inwoner'}) bij {selectedLocation.code} — {selectedLocation.name}
+                            </div>
+                            <div className="flex items-center justify-between gap-2 pt-0.5 text-[11px] text-sky-600 dark:text-sky-400 font-medium">
+                              <span>Open persoonlijk document</span>
+                              <ArrowRight className="w-3.5 h-3.5 shrink-0" />
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1929,6 +2007,50 @@ export const TownMapView: React.FC<TownMapViewProps> = ({
                   </div>
                 )}
               </div>
+
+              {(!isHouseLocation(selectedLocation) || employeePersons.length > 0) && (
+                <div>
+                  <h5 className="text-xs font-semibold text-slate-800 dark:text-slate-200 mb-2">
+                    Werknemers ({employeePersons.length})
+                  </h5>
+                  {employeePersons.length === 0 ? (
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      Geen geregistreerde werknemers bij dit gebouw.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {employeePersons.map((p) => (
+                        <button
+                          key={`emp-view-${p.id}`}
+                          type="button"
+                          onClick={() => onSelectPerson?.(p)}
+                          className="w-full text-left p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:border-sky-500/60 bg-slate-50 dark:bg-[#090D12] transition-colors space-y-1"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-900 dark:text-white">
+                              <Briefcase className="w-3.5 h-3.5 text-sky-500 shrink-0" />
+                              <span>{p.name}</span>
+                            </span>
+                            <span className="font-mono text-[10px] text-slate-500 dark:text-slate-400">
+                              {p.code}
+                            </span>
+                          </div>
+                          <div className="text-[11px] font-medium text-sky-700 dark:text-sky-300">
+                            Werkt hier als {p.occupation || 'Inwoner'} · {selectedLocation.code} — {selectedLocation.name}
+                          </div>
+                          <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                            {p.fingerprintCode}
+                          </div>
+                          <div className="flex items-center justify-between gap-2 pt-0.5 text-[11px] text-sky-600 dark:text-sky-400 font-medium">
+                            <span>Open persoonlijk document</span>
+                            <ArrowRight className="w-3.5 h-3.5 shrink-0" />
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div>
                 <h5 className="text-xs font-semibold text-slate-800 dark:text-slate-200 mb-2">

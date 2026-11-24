@@ -1,6 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import {
+  Briefcase,
   Check,
+  ChevronDown,
+  ChevronUp,
   Copy,
   Database,
   Download,
@@ -47,7 +50,12 @@ import {
   generateFingerprintPreset,
 } from '../utils/fingerprint.ts';
 import { resolveAssetUrl } from '../utils/assetUrl.ts';
-import { parsePersonImportText } from '../utils/personImport.ts';
+import {
+  buildPersonImportAiPrompt,
+  parsePersonImportText,
+  resolvePersonHomeLocation,
+  resolvePersonWorkLocation,
+} from '../utils/personImport.ts';
 import { FingerprintGrid } from './FingerprintGrid.tsx';
 import { PersonAvatar } from './PersonAvatar.tsx';
 import { TownMapView } from './TownMapView.tsx';
@@ -183,6 +191,9 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
   const [importPersonsText, setImportPersonsText] = useState('');
   const [replaceExistingOnImport, setReplaceExistingOnImport] = useState(false);
   const [personImportMessage, setPersonImportMessage] = useState<string | null>(null);
+  const [showImportAiPrompt, setShowImportAiPrompt] = useState(false);
+  const [copiedAiPrompt, setCopiedAiPrompt] = useState(false);
+  const [focusMapLocationId, setFocusMapLocationId] = useState<string | null>(null);
 
   const selectedCommunity = useMemo(
     () =>
@@ -359,6 +370,8 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
       occupation: 'Inwoner',
       address: activeCase.locations[0]?.address ?? 'Dorpsstraat 1',
       locationId: activeCase.locations[0]?.id ?? '',
+      workLocationId: '',
+      workLocationCode: '',
       portraitUrl: '',
       status: 'burger',
       alibi: '',
@@ -391,6 +404,25 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
     [importPersonsText, activeCase.locations]
   );
 
+  const personImportAiPrompt = useMemo(
+    () => buildPersonImportAiPrompt(activeCase.locations ?? []),
+    [activeCase.locations]
+  );
+
+  const handleCopyImportAiPrompt = async () => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(personImportAiPrompt);
+      } else {
+        throw new Error('Clipboard unavailable');
+      }
+      setCopiedAiPrompt(true);
+      setTimeout(() => setCopiedAiPrompt(false), 2500);
+    } catch {
+      setShowImportAiPrompt(true);
+    }
+  };
+
   const handleImportPersons = () => {
     if (parsedImportRows.length === 0) return;
 
@@ -408,11 +440,14 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
         name: row.name,
         alias: row.alias,
         age: row.age,
-        occupation: 'Inwoner',
+        occupation: row.occupation || 'Inwoner',
         address: row.matchedLocation
           ? row.matchedLocation.address || row.matchedLocation.name
           : row.normalizedLocationCode || activeCase.locations?.[0]?.address || 'Dorpsstraat 1',
         locationId: row.matchedLocation?.id ?? '',
+        workLocationId: row.matchedWorkLocation?.id ?? '',
+        workLocationCode:
+          row.matchedWorkLocation?.code ?? row.normalizedWorkLocationCode ?? '',
         portraitUrl: '',
         status: 'burger',
         alibi: '',
@@ -426,13 +461,17 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
       };
     });
 
-    const matchedCount = parsedImportRows.filter((r) => r.matchedLocation !== null).length;
+    const matchedHomeCount = parsedImportRows.filter((r) => r.matchedLocation !== null).length;
+    const matchedWorkCount = parsedImportRows.filter((r) => r.matchedWorkLocation !== null).length;
     const unmatchedCodes = Array.from(
-      new Set(
-        parsedImportRows
+      new Set([
+        ...parsedImportRows
           .filter((r) => r.normalizedLocationCode && !r.matchedLocation)
-          .map((r) => r.normalizedLocationCode)
-      )
+          .map((r) => r.normalizedLocationCode),
+        ...parsedImportRows
+          .filter((r) => r.normalizedWorkLocationCode && !r.matchedWorkLocation)
+          .map((r) => r.normalizedWorkLocationCode),
+      ])
     );
 
     onUpdateDraft({
@@ -445,8 +484,8 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
     setReplaceExistingOnImport(false);
     setPersonImportMessage(
       unmatchedCodes.length > 0
-        ? `${importedPersons.length} persoon/personen geïmporteerd (${matchedCount} gekoppeld op kaart; nog niet op kaart gevonden: ${unmatchedCodes.join(', ')}).`
-        : `${importedPersons.length} persoon/personen geïmporteerd en gekoppeld aan de kaart.`
+        ? `${importedPersons.length} persoon/personen geïmporteerd (${matchedHomeCount} woonlocatie(s) en ${matchedWorkCount} werkgebouw(en) gekoppeld; nog niet op kaart gevonden: ${unmatchedCodes.join(', ')}).`
+        : `${importedPersons.length} persoon/personen geïmporteerd (${matchedHomeCount} woonlocatie(s) en ${matchedWorkCount} werkgebouw(en) gekoppeld aan de kaart).`
     );
     setTimeout(() => setPersonImportMessage(null), 6000);
   };
@@ -1297,6 +1336,7 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
         <TownMapView
           caseFile={activeCase}
           editable
+          focusLocationId={focusMapLocationId}
           onUpdateCase={onUpdateDraft}
           onSelectPerson={(person) => {
             setSelectedPersonId(person.id);
@@ -1350,28 +1390,32 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
               </p>
             ) : (
               <div className="space-y-2">
-                {activeCase.persons.map((person) => (
-                  <button
-                    key={person.id}
-                    type="button"
-                    onClick={() => setSelectedPersonId(person.id)}
-                    className={`w-full flex items-center gap-3 p-2.5 rounded-lg border text-left transition-colors ${
-                      selectedPerson?.id === person.id
-                        ? 'border-emerald-500 bg-emerald-500/10'
-                        : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#090D12] hover:border-slate-400'
-                    }`}
-                  >
-                    <PersonAvatar src={person.portraitUrl} name={person.name} size="sm" />
-                    <div className="min-w-0 flex-1">
-                      <div className="text-xs font-semibold text-slate-900 dark:text-white truncate">
-                        {person.name}
+                {activeCase.persons.map((person) => {
+                  const workLoc = resolvePersonWorkLocation(person, activeCase.locations ?? []);
+                  return (
+                    <button
+                      key={person.id}
+                      type="button"
+                      onClick={() => setSelectedPersonId(person.id)}
+                      className={`w-full flex items-center gap-3 p-2.5 rounded-lg border text-left transition-colors ${
+                        selectedPerson?.id === person.id
+                          ? 'border-emerald-500 bg-emerald-500/10'
+                          : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#090D12] hover:border-slate-400'
+                      }`}
+                    >
+                      <PersonAvatar src={person.portraitUrl} name={person.name} size="sm" />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs font-semibold text-slate-900 dark:text-white truncate">
+                          {person.name}
+                        </div>
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                          {person.code} · {person.occupation}
+                          {workLoc ? ` (${workLoc.code})` : ''} · {person.status}
+                        </div>
                       </div>
-                      <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                        {person.code} · {person.occupation} · {person.status}
-                      </div>
-                    </div>
-                  </button>
-                ))}
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -1381,7 +1425,16 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
               <div className="py-16 text-center text-sm text-slate-500">
                 Selecteer een persoon of voeg er een toe om te bewerken.
               </div>
-            ) : (
+            ) : (() => {
+              const selectedHomeLoc = resolvePersonHomeLocation(
+                selectedPerson,
+                activeCase.locations ?? []
+              );
+              const selectedWorkLoc = resolvePersonWorkLocation(
+                selectedPerson,
+                activeCase.locations ?? []
+              );
+              return (
               <div className="space-y-5">
                 <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-200 dark:border-slate-800">
                   <div className="flex items-center gap-4">
@@ -1400,6 +1453,41 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
                       <p className="text-xs text-slate-500 dark:text-slate-400">
                         {selectedPerson.occupation} · {selectedPerson.address}
                       </p>
+                      {(selectedHomeLoc || selectedWorkLoc || selectedPerson.workLocationCode) && (
+                        <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                          {selectedHomeLoc && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setFocusMapLocationId(selectedHomeLoc.id);
+                                onChangeTab('kaart');
+                              }}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium rounded-md border border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20 transition-colors"
+                            >
+                              <MapPin className="w-3 h-3" />
+                              <span>Woont: {selectedHomeLoc.code} — {selectedHomeLoc.name}</span>
+                            </button>
+                          )}
+                          {selectedWorkLoc ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setFocusMapLocationId(selectedWorkLoc.id);
+                                onChangeTab('kaart');
+                              }}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium rounded-md border border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300 hover:bg-sky-500/20 transition-colors"
+                            >
+                              <Briefcase className="w-3 h-3" />
+                              <span>Werkt bij: {selectedWorkLoc.code} — {selectedWorkLoc.name}</span>
+                            </button>
+                          ) : selectedPerson.workLocationCode ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-mono rounded-md border border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300">
+                              <Briefcase className="w-3 h-3" />
+                              <span>Werkgebouw: {selectedPerson.workLocationCode} (nog niet op kaart)</span>
+                            </span>
+                          ) : null}
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -1469,7 +1557,7 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div>
                     <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
                       Beroep / Rol
@@ -1504,7 +1592,7 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
-                      Gekoppelde kaartlocatie
+                      Woonlocatie (kaart)
                     </label>
                     <select
                       value={selectedPerson.locationId}
@@ -1519,7 +1607,32 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
                       }}
                       className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-[#090D12]"
                     >
-                      <option value="">Geen gekoppelde locatie</option>
+                      <option value="">Geen gekoppelde woonlocatie</option>
+                      {activeCase.locations.map((loc) => (
+                        <option key={loc.id} value={loc.id}>
+                          {loc.code} — {loc.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
+                      Werkgebouw (beroep)
+                    </label>
+                    <select
+                      value={selectedWorkLoc?.id ?? selectedPerson.workLocationId ?? ''}
+                      onChange={(e) => {
+                        const loc = activeCase.locations.find(
+                          (l) => l.id === e.target.value
+                        );
+                        updatePerson(selectedPerson.id, {
+                          workLocationId: e.target.value,
+                          workLocationCode: loc ? loc.code : '',
+                        });
+                      }}
+                      className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-[#090D12]"
+                    >
+                      <option value="">Geen werkgebouw</option>
                       {activeCase.locations.map((loc) => (
                         <option key={loc.id} value={loc.id}>
                           {loc.code} — {loc.name}
@@ -1664,7 +1777,8 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
                   />
                 </div>
               </div>
-            )}
+              );
+            })()}
           </div>
         </div>
       )}
@@ -2572,14 +2686,78 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
                 Volgorde per regel:
               </div>
               <div className="font-mono text-[11px] text-emerald-700 dark:text-emerald-300 break-words">
-                Volledige naam [Tab] Bijnaam (mag leeg blijven) [Tab] Leeftijd [Tab] Kaartlocatiecode (bijv. H-1, H-2, H-15) [Tab] Openbare achtergrond [Tab] Politie-aantekeningen
+                Volledige naam [Tab] Bijnaam (mag leeg blijven) [Tab] Beroep (met werkgebouwcode tussen haakjes, bijv. Bakker (W-1)) [Tab] Leeftijd [Tab] Kaartlocatiecode (bijv. H-1, H-2, H-15) [Tab] Openbare achtergrond [Tab] Politie-aantekeningen
               </div>
-              <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                Huis-codes: <code className="font-mono">H-1</code>, <code className="font-mono">H-2</code>, enz. (ook los nummer zoals <code className="font-mono">12</code> wordt automatisch herkend als <code className="font-mono">H-12</code>). Beschikbare codes op deze kaart:{' '}
+              <div className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                Huis-codes: <code className="font-mono">H-1</code>, <code className="font-mono">H-2</code>, enz. (ook los nummer zoals <code className="font-mono">12</code> wordt herkend als <code className="font-mono">H-12</code>). Zet de werkgebouwcode naast het beroep tussen haakjes (bijv. <code className="font-mono">Bakker (W-1)</code>): de haakjes worden automatisch weggehaald en werknemer + gebouw worden aan elkaar gekoppeld. Beschikbare codes op deze kaart:{' '}
                 {(activeCase.locations ?? []).length > 0
                   ? (activeCase.locations ?? []).map((l) => l.code).join(', ')
                   : 'nog geen locaties op kaart'}
               </div>
+            </div>
+
+            {/* Ready-to-use AI Prompt Helper */}
+            <div className="p-3.5 rounded-lg border border-sky-500/30 bg-sky-500/5 text-xs space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-sky-500 shrink-0" />
+                  <div>
+                    <div className="font-semibold text-slate-900 dark:text-white">
+                      AI Export-prompt (foutloos laten genereren)
+                    </div>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Kopieer deze prompt voor ChatGPT, Claude of Gemini zodat de AI direct het juiste 7-koloms Tab-formaat met werkcodes tussen haakjes teruggeeft.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowImportAiPrompt((prev) => !prev)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0F151D] hover:bg-slate-100 dark:hover:bg-slate-800"
+                  >
+                    {showImportAiPrompt ? (
+                      <>
+                        <ChevronUp className="w-3.5 h-3.5" />
+                        <span>Verberg prompt</span>
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown className="w-3.5 h-3.5" />
+                        <span>Bekijk prompt</span>
+                      </>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCopyImportAiPrompt}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold rounded-md bg-sky-600 hover:bg-sky-500 text-white transition-colors"
+                  >
+                    {copiedAiPrompt ? (
+                      <>
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Gekopieerd!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>AI-prompt kopiëren</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {showImportAiPrompt && (
+                <textarea
+                  readOnly
+                  rows={9}
+                  value={personImportAiPrompt}
+                  onFocus={(e) => e.currentTarget.select()}
+                  aria-label="AI export prompt tekst"
+                  className="w-full px-3 py-2 text-[11px] font-mono rounded-lg border border-sky-500/30 bg-white dark:bg-[#090D12] text-slate-800 dark:text-slate-200 focus:outline-none"
+                />
+              )}
             </div>
 
             <div className="space-y-2">
@@ -2596,8 +2774,8 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
                     onClick={() =>
                       setImportPersonsText(
                         [
-                          'Jan de Vries\t\t42\tH-1\tBakker op de hoek van het plein.\tGezien rond 22:00 bij de haven.',
-                          'Sanne Bakker\tDe Vos\t29\tH-2\tBuurvrouw naast de bakkerij.\tHoorde voetstappen in de steeg.',
+                          'Jan de Vries\t\tBakker (W-1)\t42\tH-1\tBakker op de hoek van het plein.\tGezien rond 22:00 bij de haven.',
+                          'Sanne Bakker\tDe Vos\tBibliothecaresse (LOC-02)\t29\tH-2\tBuurvrouw naast de bakkerij.\tHoorde voetstappen in de steeg.',
                         ].join('\n')
                       )
                     }
@@ -2645,7 +2823,7 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
                     });
                   }
                 }}
-                placeholder={'Jan de Vries\t\t42\tH-1\tOpenbare achtergrond voor spelers\tPolitie-aantekeningen voor spelers'}
+                placeholder={'Jan de Vries\t\tBakker (W-1)\t42\tH-1\tOpenbare achtergrond voor spelers\tPolitie-aantekeningen voor spelers'}
                 className="w-full px-3 py-2.5 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-[#090D12] text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
               />
             </div>
@@ -2661,8 +2839,9 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
                       <tr>
                         <th className="px-2.5 py-2 font-semibold">Naam</th>
                         <th className="px-2.5 py-2 font-semibold">Bijnaam</th>
+                        <th className="px-2.5 py-2 font-semibold">Beroep &amp; werkplek</th>
                         <th className="px-2.5 py-2 font-semibold">Leeftijd</th>
-                        <th className="px-2.5 py-2 font-semibold">Kaartlocatie</th>
+                        <th className="px-2.5 py-2 font-semibold">Woonlocatie</th>
                         <th className="px-2.5 py-2 font-semibold">Achtergrond</th>
                         <th className="px-2.5 py-2 font-semibold">Politie-aantekeningen</th>
                       </tr>
@@ -2675,6 +2854,18 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
                           </td>
                           <td className="px-2.5 py-2 text-slate-500 dark:text-slate-400">
                             {row.alias || '—'}
+                          </td>
+                          <td className="px-2.5 py-2 text-slate-700 dark:text-slate-300">
+                            <div>{row.occupation || 'Inwoner'}</div>
+                            {row.matchedWorkLocation ? (
+                              <div className="font-mono text-[10px] text-sky-600 dark:text-sky-400">
+                                {row.matchedWorkLocation.code} — {row.matchedWorkLocation.name}
+                              </div>
+                            ) : row.normalizedWorkLocationCode ? (
+                              <div className="font-mono text-[10px] text-amber-600 dark:text-amber-400">
+                                {row.normalizedWorkLocationCode} (nog niet op kaart)
+                              </div>
+                            ) : null}
                           </td>
                           <td className="px-2.5 py-2 font-mono text-slate-700 dark:text-slate-300">
                             {row.age}

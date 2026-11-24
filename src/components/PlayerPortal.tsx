@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import {
   BookmarkPlus,
+  Briefcase,
   CheckCircle2,
   Eraser,
   FileText,
@@ -32,6 +33,10 @@ import {
   createEmptyMatrix,
 } from '../utils/fingerprint.ts';
 import { resolveAssetUrl } from '../utils/assetUrl.ts';
+import {
+  resolvePersonHomeLocation,
+  resolvePersonWorkLocation,
+} from '../utils/personImport.ts';
 import { FingerprintGrid } from './FingerprintGrid.tsx';
 import { PersonAvatar } from './PersonAvatar.tsx';
 import { TownMapView } from './TownMapView.tsx';
@@ -82,6 +87,7 @@ export const PlayerPortal: React.FC<PlayerPortalProps> = ({
   const [newCaseCode, setNewCaseCode] = useState('');
   const [redeemError, setRedeemError] = useState<string | null>(null);
   const [redeeming, setRedeeming] = useState(false);
+  const [focusMapLocationId, setFocusMapLocationId] = useState<string | null>(null);
 
   // Fingerprint Comparator state
   const allEvidenceStamps = useMemo(
@@ -621,6 +627,7 @@ export const PlayerPortal: React.FC<PlayerPortalProps> = ({
         <TownMapView
           caseFile={activeCase}
           editable={false}
+          focusLocationId={focusMapLocationId}
           onSelectPerson={(p: Person) => {
             setSelectedPersonId(p.id);
             onChangeTab('personen');
@@ -674,6 +681,7 @@ export const PlayerPortal: React.FC<PlayerPortalProps> = ({
               ) : (
                 filteredPersons.map((p) => {
                   const mark = note.suspectMarks[p.id];
+                  const workLoc = resolvePersonWorkLocation(p, activeCase.locations ?? []);
                   return (
                     <button
                       key={p.id}
@@ -704,7 +712,8 @@ export const PlayerPortal: React.FC<PlayerPortalProps> = ({
                           )}
                         </div>
                         <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                          {p.occupation} · {p.address}
+                          {p.occupation}
+                          {workLoc ? ` (${workLoc.code})` : ''} · {p.address}
                         </div>
                       </div>
                     </button>
@@ -719,7 +728,16 @@ export const PlayerPortal: React.FC<PlayerPortalProps> = ({
               <div className="py-16 text-center text-sm text-slate-500">
                 Selecteer een persoon om het politiedossier in te zien.
               </div>
-            ) : (
+            ) : (() => {
+              const selectedHomeLoc = resolvePersonHomeLocation(
+                selectedPerson,
+                activeCase.locations ?? []
+              );
+              const selectedWorkLoc = resolvePersonWorkLocation(
+                selectedPerson,
+                activeCase.locations ?? []
+              );
+              return (
               <div className="space-y-6">
                 <div className="flex flex-wrap items-start justify-between gap-4 pb-4 border-b border-slate-200 dark:border-slate-800">
                   <div className="flex items-center gap-4">
@@ -740,6 +758,41 @@ export const PlayerPortal: React.FC<PlayerPortalProps> = ({
                         {selectedPerson.age} jaar · {selectedPerson.occupation} ·{' '}
                         {selectedPerson.address}
                       </p>
+                      {(selectedHomeLoc || selectedWorkLoc || selectedPerson.workLocationCode) && (
+                        <div className="flex flex-wrap items-center gap-2 mt-2">
+                          {selectedHomeLoc && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setFocusMapLocationId(selectedHomeLoc.id);
+                                onChangeTab('kaart');
+                              }}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-md border border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20 transition-colors"
+                            >
+                              <MapPin className="w-3 h-3" />
+                              <span>Woont: {selectedHomeLoc.code} — {selectedHomeLoc.name}</span>
+                            </button>
+                          )}
+                          {selectedWorkLoc ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setFocusMapLocationId(selectedWorkLoc.id);
+                                onChangeTab('kaart');
+                              }}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-md border border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300 hover:bg-sky-500/20 transition-colors"
+                            >
+                              <Briefcase className="w-3 h-3" />
+                              <span>Werkplek: {selectedWorkLoc.code} — {selectedWorkLoc.name}</span>
+                            </button>
+                          ) : selectedPerson.workLocationCode ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-mono rounded-md border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300">
+                              <Briefcase className="w-3 h-3" />
+                              <span>Werkgebouw: {selectedPerson.workLocationCode}</span>
+                            </span>
+                          ) : null}
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -833,7 +886,8 @@ export const PlayerPortal: React.FC<PlayerPortalProps> = ({
                   </div>
                 </div>
               </div>
-            )}
+              );
+            })()}
           </div>
         </div>
       )}

@@ -255,6 +255,8 @@ function hydratePersons(rawPersons: unknown): Person[] {
       occupation: String(p.occupation ?? ''),
       address: String(p.address ?? ''),
       locationId: String(p.locationId ?? ''),
+      workLocationId: typeof p.workLocationId === 'string' ? p.workLocationId : '',
+      workLocationCode: typeof p.workLocationCode === 'string' ? p.workLocationCode : '',
       portraitUrl: String(p.portraitUrl ?? ''),
       status:
         p.status === 'verdachte' ||
