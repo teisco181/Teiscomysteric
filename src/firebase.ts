@@ -1,17 +1,36 @@
-import { initializeApp } from 'firebase/app';
+import { initializeApp, getApps } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
-import { doc, getDocFromServer, initializeFirestore } from 'firebase/firestore';
+import {
+  doc,
+  getDocFromServer,
+  getFirestore,
+  initializeFirestore,
+  type Firestore,
+} from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
-const app = initializeApp(firebaseConfig);
+const app = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
 
-export const db = initializeFirestore(
-  app,
-  {
-    experimentalAutoDetectLongPolling: true,
-  },
-  firebaseConfig.firestoreDatabaseId
-);
+function createSafeFirestore(): Firestore {
+  const dbId = firebaseConfig.firestoreDatabaseId || undefined;
+  try {
+    return initializeFirestore(
+      app,
+      {
+        experimentalAutoDetectLongPolling: true,
+      },
+      dbId
+    );
+  } catch {
+    try {
+      return dbId ? getFirestore(app, dbId) : getFirestore(app);
+    } catch {
+      return getFirestore(app);
+    }
+  }
+}
+
+export const db = createSafeFirestore();
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });

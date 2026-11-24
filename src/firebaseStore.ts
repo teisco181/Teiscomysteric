@@ -37,8 +37,11 @@ import {
   type AuthUser,
   type CaseFile,
   type CommunityTemplate,
+  type EvidenceItem,
+  type EvidenceStamp,
   type MapLocation,
   type MapTemplate,
+  type Person,
   type PlayerNote,
   type TerrainType,
   type UserRole,
@@ -239,6 +242,86 @@ function serializeCaseDoc(
   };
 }
 
+function hydratePersons(rawPersons: unknown): Person[] {
+  if (!Array.isArray(rawPersons)) return [];
+  return rawPersons
+    .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+    .map((p, idx) => ({
+      id: String(p.id ?? `per-${idx}`),
+      code: String(p.code ?? `PRS-${String(idx + 1).padStart(2, '0')}`),
+      name: String(p.name ?? 'Onbekend Persoon'),
+      alias: String(p.alias ?? ''),
+      age: Number.isFinite(Number(p.age)) ? Number(p.age) : 35,
+      occupation: String(p.occupation ?? ''),
+      address: String(p.address ?? ''),
+      locationId: String(p.locationId ?? ''),
+      portraitUrl: String(p.portraitUrl ?? ''),
+      status:
+        p.status === 'verdachte' ||
+        p.status === 'getuige' ||
+        p.status === 'slachtoffer' ||
+        p.status === 'burger'
+          ? p.status
+          : 'burger',
+      alibi: String(p.alibi ?? ''),
+      publicBio: String(p.publicBio ?? ''),
+      policeNotes: String(p.policeNotes ?? ''),
+      fingerprintCode: String(p.fingerprintCode ?? `FP-${idx + 1}`),
+      fingerprintPattern:
+        p.fingerprintPattern === 'Kring' ||
+        p.fingerprintPattern === 'Lus' ||
+        p.fingerprintPattern === 'Boog' ||
+        p.fingerprintPattern === 'Samengesteld'
+          ? p.fingerprintPattern
+          : 'Lus',
+      fingerprint: Array.isArray(p.fingerprint) ? p.fingerprint.map((v) => Number(v) || 0) : [],
+      isCulprit: Boolean(p.isCulprit),
+      creatorSecretNote: String(p.creatorSecretNote ?? ''),
+    }));
+}
+
+function hydrateEvidence(rawEvidence: unknown): EvidenceItem[] {
+  if (!Array.isArray(rawEvidence)) return [];
+  return rawEvidence
+    .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+    .map((ev, idx) => {
+      const rawStamps = Array.isArray(ev.stamps) ? ev.stamps : [];
+      const stamps: EvidenceStamp[] = rawStamps
+        .filter((s): s is Record<string, unknown> => Boolean(s && typeof s === 'object'))
+        .map((s, sIdx) => ({
+          id: String(s.id ?? `stamp-${idx}-${sIdx}`),
+          label: String(s.label ?? `Spoor ${sIdx + 1}`),
+          personId: String(s.personId ?? ''),
+          x: Number.isFinite(Number(s.x)) ? Number(s.x) : 50,
+          y: Number.isFinite(Number(s.y)) ? Number(s.y) : 50,
+          rotation: Number.isFinite(Number(s.rotation)) ? Number(s.rotation) : 0,
+          smudgeLevel: Number.isFinite(Number(s.smudgeLevel)) ? Number(s.smudgeLevel) : 0,
+          matrix: Array.isArray(s.matrix) ? s.matrix.map((v) => Number(v) || 0) : [],
+        }));
+
+      return {
+        id: String(ev.id ?? `ev-${idx}`),
+        code: String(ev.code ?? `BW-${String(idx + 1).padStart(2, '0')}`),
+        title: String(ev.title ?? 'Bewijsstuk'),
+        category:
+          ev.category === 'voorwerp' ||
+          ev.category === 'document' ||
+          ev.category === 'digitaal' ||
+          ev.category === 'biologisch' ||
+          ev.category === 'spoor'
+            ? ev.category
+            : 'voorwerp',
+        locationId: String(ev.locationId ?? ''),
+        foundAtLabel: String(ev.foundAtLabel ?? ''),
+        description: String(ev.description ?? ''),
+        forensicReport: String(ev.forensicReport ?? ''),
+        imageUrl: String(ev.imageUrl ?? ''),
+        visibleToPlayers: ev.visibleToPlayers !== false,
+        stamps,
+      };
+    });
+}
+
 function hydrateCase(id: string, data: Record<string, unknown>): CaseFile {
   return {
     id,
@@ -253,9 +336,9 @@ function hydrateCase(id: string, data: Record<string, unknown>): CaseFile {
     mapCols: Number(data.mapCols ?? MAP_COLS),
     mapRows: Number(data.mapRows ?? MAP_ROWS),
     terrain: Array.isArray(data.terrain) ? (data.terrain as TerrainType[]) : [],
-    locations: Array.isArray(data.locations) ? (data.locations as CaseFile['locations']) : [],
-    persons: Array.isArray(data.persons) ? (data.persons as CaseFile['persons']) : [],
-    evidence: Array.isArray(data.evidence) ? (data.evidence as CaseFile['evidence']) : [],
+    locations: serializeLocations(data.locations),
+    persons: hydratePersons(data.persons),
+    evidence: hydrateEvidence(data.evidence),
     createdAt: toIso(data.createdAt),
     updatedAt: toIso(data.updatedAt),
   };
@@ -269,7 +352,7 @@ function hydrateMapTemplate(id: string, data: Record<string, unknown>): MapTempl
     mapCols: Number(data.mapCols ?? MAP_COLS),
     mapRows: Number(data.mapRows ?? MAP_ROWS),
     terrain: Array.isArray(data.terrain) ? (data.terrain as TerrainType[]) : [],
-    locations: Array.isArray(data.locations) ? (data.locations as MapTemplate['locations']) : [],
+    locations: serializeLocations(data.locations),
     createdAt: toIso(data.createdAt),
     updatedAt: toIso(data.updatedAt),
   };
@@ -284,8 +367,8 @@ function hydrateCommunity(id: string, data: Record<string, unknown>): CommunityT
     mapCols: Number(data.mapCols ?? MAP_COLS),
     mapRows: Number(data.mapRows ?? MAP_ROWS),
     terrain: Array.isArray(data.terrain) ? (data.terrain as TerrainType[]) : [],
-    locations: Array.isArray(data.locations) ? (data.locations as CommunityTemplate['locations']) : [],
-    persons: Array.isArray(data.persons) ? (data.persons as CommunityTemplate['persons']) : [],
+    locations: serializeLocations(data.locations),
+    persons: hydratePersons(data.persons),
     createdAt: toIso(data.createdAt),
     updatedAt: toIso(data.updatedAt),
   };

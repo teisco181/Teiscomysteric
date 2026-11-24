@@ -137,13 +137,13 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
 }) => {
   const [copiedCode, setCopiedCode] = useState(false);
   const [selectedPersonId, setSelectedPersonId] = useState<string>(
-    activeCase.persons[0]?.id ?? ''
+    activeCase.persons?.[0]?.id ?? ''
   );
   const [selectedEvidenceId, setSelectedEvidenceId] = useState<string>(
-    activeCase.evidence[0]?.id ?? ''
+    activeCase.evidence?.[0]?.id ?? ''
   );
   const [selectedStampId, setSelectedStampId] = useState<string>(
-    activeCase.evidence[0]?.stamps[0]?.id ?? ''
+    activeCase.evidence?.[0]?.stamps?.[0]?.id ?? ''
   );
   const [brushMode, setBrushMode] = useState<'ridge' | 'faint' | 'erase'>('ridge');
   const [fpSeed, setFpSeed] = useState(15);
@@ -202,8 +202,8 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
 
   const selectedStamp = useMemo(
     () =>
-      selectedEvidence?.stamps.find((s) => s.id === selectedStampId) ??
-      selectedEvidence?.stamps[0] ??
+      selectedEvidence?.stamps?.find((s) => s.id === selectedStampId) ??
+      selectedEvidence?.stamps?.[0] ??
       null,
     [selectedEvidence, selectedStampId]
   );
@@ -213,8 +213,8 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
       string,
       Array<{ evidenceId: string; evidenceCode: string; evidenceTitle: string; stamp: EvidenceStamp }>
     >();
-    for (const ev of activeCase.evidence) {
-      for (const st of ev.stamps) {
+    for (const ev of activeCase.evidence ?? []) {
+      for (const st of ev.stamps ?? []) {
         if (!st.personId) continue;
         const list = map.get(st.personId) ?? [];
         list.push({
@@ -231,7 +231,7 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
 
   const filteredFpPersons = useMemo(() => {
     const q = fpSearch.trim().toLowerCase();
-    return activeCase.persons.filter((person) => {
+    return (activeCase.persons ?? []).filter((person) => {
       if (fpGroupMode === 'suspects' && person.status !== 'verdachte') {
         return false;
       }
@@ -241,16 +241,16 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
       if (!q) return true;
       const linkedStamps = stampsByPersonId.get(person.id) ?? [];
       const matchesPerson =
-        person.name.toLowerCase().includes(q) ||
-        person.code.toLowerCase().includes(q) ||
-        person.fingerprintCode.toLowerCase().includes(q) ||
-        person.fingerprintPattern.toLowerCase().includes(q) ||
-        person.status.toLowerCase().includes(q);
+        (person.name ?? '').toLowerCase().includes(q) ||
+        (person.code ?? '').toLowerCase().includes(q) ||
+        (person.fingerprintCode ?? '').toLowerCase().includes(q) ||
+        (person.fingerprintPattern ?? '').toLowerCase().includes(q) ||
+        (person.status ?? '').toLowerCase().includes(q);
       const matchesLinkedEvidence = linkedStamps.some(
         (item) =>
-          item.evidenceCode.toLowerCase().includes(q) ||
-          item.evidenceTitle.toLowerCase().includes(q) ||
-          item.stamp.label.toLowerCase().includes(q)
+          (item.evidenceCode ?? '').toLowerCase().includes(q) ||
+          (item.evidenceTitle ?? '').toLowerCase().includes(q) ||
+          (item.stamp.label ?? '').toLowerCase().includes(q)
       );
       return matchesPerson || matchesLinkedEvidence;
     });
@@ -258,12 +258,12 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
 
   const filteredFpEvidenceGroups = useMemo(() => {
     const q = fpSearch.trim().toLowerCase();
-    return activeCase.evidence
+    return (activeCase.evidence ?? [])
       .map((ev) => {
-        const stampsWithPerson = ev.stamps
+        const stampsWithPerson = (ev.stamps ?? [])
           .map((st) => ({
             stamp: st,
-            person: activeCase.persons.find((p) => p.id === st.personId) ?? null,
+            person: (activeCase.persons ?? []).find((p) => p.id === st.personId) ?? null,
           }))
           .filter(({ stamp, person }) => {
             if (fpPatternFilter !== 'all' && person?.fingerprintPattern !== fpPatternFilter) {
@@ -271,12 +271,12 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
             }
             if (!q) return true;
             return (
-              ev.title.toLowerCase().includes(q) ||
-              ev.code.toLowerCase().includes(q) ||
-              stamp.label.toLowerCase().includes(q) ||
-              (person?.name.toLowerCase().includes(q) ?? false) ||
-              (person?.fingerprintCode.toLowerCase().includes(q) ?? false) ||
-              (person?.fingerprintPattern.toLowerCase().includes(q) ?? false)
+              (ev.title ?? '').toLowerCase().includes(q) ||
+              (ev.code ?? '').toLowerCase().includes(q) ||
+              (stamp.label ?? '').toLowerCase().includes(q) ||
+              (person?.name?.toLowerCase().includes(q) ?? false) ||
+              (person?.fingerprintCode?.toLowerCase().includes(q) ?? false) ||
+              (person?.fingerprintPattern?.toLowerCase().includes(q) ?? false)
             );
           });
         return { evidence: ev, items: stampsWithPerson };
@@ -286,16 +286,16 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
         if (!q && fpPatternFilter === 'all') return true;
         return (
           fpPatternFilter === 'all' &&
-          (evidence.title.toLowerCase().includes(q) ||
-            evidence.code.toLowerCase().includes(q))
+          ((evidence.title ?? '').toLowerCase().includes(q) ||
+            (evidence.code ?? '').toLowerCase().includes(q))
         );
       });
   }, [activeCase.evidence, activeCase.persons, fpSearch, fpPatternFilter]);
 
   const selectedFpEvidenceContext = useMemo(() => {
     if (!selectedFpEvidenceStampId) return null;
-    for (const ev of activeCase.evidence) {
-      const st = ev.stamps.find((s) => s.id === selectedFpEvidenceStampId);
+    for (const ev of activeCase.evidence ?? []) {
+      const st = (ev.stamps ?? []).find((s) => s.id === selectedFpEvidenceStampId);
       if (st) {
         return { evidence: ev, stamp: st };
       }
@@ -304,17 +304,21 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
   }, [activeCase.evidence, selectedFpEvidenceStampId]);
 
   const dossierSummary = useMemo(() => {
-    const locationCount = activeCase.locations.length;
-    const zoneCount = activeCase.locations.filter(
+    const locations = Array.isArray(activeCase.locations) ? activeCase.locations : [];
+    const persons = Array.isArray(activeCase.persons) ? activeCase.persons : [];
+    const evidence = Array.isArray(activeCase.evidence) ? activeCase.evidence : [];
+
+    const locationCount = locations.length;
+    const zoneCount = locations.filter(
       (loc) => (loc.kind ?? 'building') === 'zone'
     ).length;
     const buildingCount = locationCount - zoneCount;
-    const suspectCount = activeCase.persons.filter((p) => p.status === 'verdachte').length;
-    const totalPersons = activeCase.persons.length;
-    const pendingEvidenceCount = activeCase.evidence.filter(
-      (ev) => !ev.visibleToPlayers || ev.stamps.length === 0
+    const suspectCount = persons.filter((p) => p.status === 'verdachte').length;
+    const totalPersons = persons.length;
+    const pendingEvidenceCount = evidence.filter(
+      (ev) => !ev.visibleToPlayers || !Array.isArray(ev.stamps) || ev.stamps.length === 0
     ).length;
-    const totalEvidence = activeCase.evidence.length;
+    const totalEvidence = evidence.length;
 
     return {
       locationCount,

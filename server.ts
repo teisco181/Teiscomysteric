@@ -301,7 +301,11 @@ async function startServer(): Promise<void> {
   } else {
     const distDir = path.resolve(process.cwd(), 'dist');
     app.use(express.static(distDir));
-    app.get('*', (_req, res) => {
+    app.get('*', (req, res) => {
+      if (/\.(js|mjs|css|map|json|png|jpe?g|svg|webp|woff2?|ico)$/i.test(req.path)) {
+        res.status(404).send('Asset not found.');
+        return;
+      }
       const indexPath = path.join(distDir, 'index.html');
       if (fs.existsSync(indexPath)) {
         res.sendFile(indexPath);
