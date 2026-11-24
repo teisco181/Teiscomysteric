@@ -1298,6 +1298,10 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
           caseFile={activeCase}
           editable
           onUpdateCase={onUpdateDraft}
+          onSelectPerson={(person) => {
+            setSelectedPersonId(person.id);
+            onChangeTab('personen');
+          }}
           mapTemplates={mapTemplates}
           onSaveNewMapTemplate={onSaveNewMapTemplate}
           onUpdateMapTemplate={onUpdateMapTemplate}
