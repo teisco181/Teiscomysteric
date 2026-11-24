@@ -10,6 +10,7 @@ import {
   FileText,
   Fingerprint,
   FlipHorizontal2,
+  MapPin,
   Package,
   Pencil,
   Plus,
@@ -302,6 +303,30 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
     return null;
   }, [activeCase.evidence, selectedFpEvidenceStampId]);
 
+  const dossierSummary = useMemo(() => {
+    const locationCount = activeCase.locations.length;
+    const zoneCount = activeCase.locations.filter(
+      (loc) => (loc.kind ?? 'building') === 'zone'
+    ).length;
+    const buildingCount = locationCount - zoneCount;
+    const suspectCount = activeCase.persons.filter((p) => p.status === 'verdachte').length;
+    const totalPersons = activeCase.persons.length;
+    const pendingEvidenceCount = activeCase.evidence.filter(
+      (ev) => !ev.visibleToPlayers || ev.stamps.length === 0
+    ).length;
+    const totalEvidence = activeCase.evidence.length;
+
+    return {
+      locationCount,
+      buildingCount,
+      zoneCount,
+      suspectCount,
+      totalPersons,
+      pendingEvidenceCount,
+      totalEvidence,
+    };
+  }, [activeCase.locations, activeCase.persons, activeCase.evidence]);
+
   const updatePerson = (personId: string, patch: Partial<Person>) => {
     onUpdateDraft({
       ...activeCase,
@@ -552,7 +577,90 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
 
       {/* TAB 1: DOSSIER SETTINGS */}
       {activeTab === 'dossier' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <div className="space-y-4">
+          <div
+            aria-label="Dossieroverzicht"
+            className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0F151D]"
+          >
+            <button
+              type="button"
+              onClick={() => onChangeTab('kaart')}
+              className="flex items-center gap-3 px-3.5 py-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-[#090D12] hover:border-emerald-500/40 hover:bg-emerald-500/5 transition-colors text-left"
+            >
+              <div className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+                <MapPin className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-[11px] font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Locaties
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-lg font-bold tabular-nums text-slate-900 dark:text-white">
+                    {dossierSummary.locationCount}
+                  </span>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                    {dossierSummary.buildingCount} gebouwen · {dossierSummary.zoneCount} POV
+                  </span>
+                </div>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onChangeTab('personen')}
+              className="flex items-center gap-3 px-3.5 py-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-[#090D12] hover:border-rose-500/40 hover:bg-rose-500/5 transition-colors text-left"
+            >
+              <div className="w-8 h-8 rounded-lg bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0">
+                <Users className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-[11px] font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Verdachten
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-lg font-bold tabular-nums text-slate-900 dark:text-white">
+                    {dossierSummary.suspectCount}
+                  </span>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                    van {dossierSummary.totalPersons} personen
+                  </span>
+                </div>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onChangeTab('bewijsstukken')}
+              className="flex items-center gap-3 px-3.5 py-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-[#090D12] hover:border-amber-500/40 hover:bg-amber-500/5 transition-colors text-left"
+            >
+              <div
+                className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                  dossierSummary.pendingEvidenceCount > 0
+                    ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                    : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                }`}
+              >
+                <Package className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-[11px] font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Openstaande bewijsstukken
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-lg font-bold tabular-nums text-slate-900 dark:text-white">
+                    {dossierSummary.pendingEvidenceCount}
+                  </span>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                    {dossierSummary.pendingEvidenceCount === 0
+                      ? `alle ${dossierSummary.totalEvidence} gereed`
+                      : `van ${dossierSummary.totalEvidence} (verborgen/zonder spoor)`}
+                  </span>
+                </div>
+              </div>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           <div className="lg:col-span-8 p-6 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0F151D] space-y-5">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-4">
               <div>
@@ -1103,6 +1211,7 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
               </div>
             )}
           </aside>
+        </div>
         </div>
       )}
 

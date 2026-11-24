@@ -76,6 +76,28 @@ function readStoredSetting(key: string): string | null {
   }
 }
 
+function formatErrorMessage(err: unknown, fallback: string): string {
+  const raw = err instanceof Error ? err.message : String(err ?? '');
+  if (!raw) return fallback;
+  if (raw.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(raw) as { error?: string };
+      if (parsed?.error) {
+        if (parsed.error.includes('client is offline')) {
+          return 'Geen verbinding met de database (offline). Controleer je internetverbinding en probeer opnieuw.';
+        }
+        if (parsed.error.includes('Missing or insufficient permissions')) {
+          return 'Geen toegang tot deze gegevens (controleer je rechten of verificatie).';
+        }
+        return parsed.error;
+      }
+    } catch {
+      // Fall through to raw message
+    }
+  }
+  return raw;
+}
+
 function writeStoredSetting(key: string, value: string): void {
   try {
     if (typeof window !== 'undefined' && window.localStorage) {
@@ -170,9 +192,19 @@ export default function App() {
     setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
   };
 
+  const authSeqRef = useRef(0);
+
   // Observe Firebase Auth state
   useEffect(() => {
+    const bootTimer = window.setTimeout(() => {
+      setAuthLoading(false);
+      setAuthReady(true);
+    }, 8000);
+
     const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
+      window.clearTimeout(bootTimer);
+      const seq = ++authSeqRef.current;
+
       if (!fbUser) {
         setAuthUser(null);
         setAccountMeta({ email: null, emailVerified: false, hasPasswordProvider: false });
@@ -184,6 +216,7 @@ export default function App() {
         setNote(null);
         setIsDirty(false);
         setLoadError(null);
+        setLoadingData(false);
         setAuthLoading(false);
         setAuthReady(true);
         return;
@@ -196,9 +229,18 @@ export default function App() {
         emailVerified: fbUser.emailVerified,
         hasPasswordProvider: fbUser.providerData.some((p) => p.providerId === 'password'),
       });
+
       try {
         const profile = await ensureUserProfile(fbUser);
-        setAuthUser(profile);
+        if (seq !== authSeqRef.current) return;
+        setAuthUser((prev) =>
+          prev &&
+          prev.id === profile.id &&
+          prev.role === profile.role &&
+          prev.username === profile.username
+            ? prev
+            : profile
+        );
         if (profile.role === 'admin') {
           const savedView = readStoredSetting('teiscomysterics_view_mode');
           setViewMode(savedView === 'player' ? 'player' : 'maker');
@@ -206,124 +248,146 @@ export default function App() {
           setViewMode('player');
         }
       } catch (err) {
+        if (seq !== authSeqRef.current) return;
         setAuthError(
-          err instanceof Error
-            ? err.message
-            : 'Gebruikersprofiel kon niet worden geladen uit Firestore.'
+          formatErrorMessage(
+            err,
+            'Gebruikersprofiel kon niet worden geladen uit Firestore.'
+          )
         );
         setAuthUser(null);
       } finally {
-        setAuthLoading(false);
-        setAuthReady(true);
+        if (seq === authSeqRef.current) {
+          setAuthLoading(false);
+          setAuthReady(true);
+        }
       }
     });
 
-    return () => unsubscribe();
+    return () => {
+      window.clearTimeout(bootTimer);
+      unsubscribe();
+    };
   }, []);
+
+  const authUserId = authUser?.id ?? null;
+  const authUserRole = authUser?.role ?? null;
 
   // Subscribe to Firestore collections after auth is ready
   useEffect(() => {
-    if (!authReady || !authUser) return;
+    if (!authReady || !authUser || !authUserId || !authUserRole) return;
 
     let cancelled = false;
+    let settled = false;
     let unsubCases: (() => void) | null = null;
     let unsubMaps: (() => void) | null = null;
     let unsubCommunities: (() => void) | null = null;
 
-    const startSubscriptions = async () => {
-      setLoadingData(true);
-      setLoadError(null);
+    setLoadingData(true);
+    setLoadError(null);
 
-      try {
-        if (authUser.role === 'admin') {
-          await ensureStarterSeedData(authUser.id);
-        }
-        await migrateLegacyStaticDbToFirestore(authUser);
-        if (cancelled) return;
-
-        unsubCases = subscribeCases(
-          authUser,
-          (list) => {
-            if (cancelled) return;
-            setCases(list);
-            setLoadingData(false);
-
-            const preferredId =
-              activeCaseIdRef.current ||
-              readStoredSetting('teiscomysterics_active_case') ||
-              '';
-            const currentMatch = list.find((c) => c.id === preferredId);
-            if (!currentMatch) {
-              const first = list[0] ?? null;
-              draftVersionRef.current += 1;
-              setActiveCaseId(first?.id ?? '');
-              if (first?.id) {
-                writeStoredSetting('teiscomysterics_active_case', first.id);
-              }
-              setDraftCase(first);
-              latestDraftRef.current = first;
-              setIsDirty(false);
-              isDirtyRef.current = false;
-            } else {
-              if (activeCaseIdRef.current !== currentMatch.id) {
-                setActiveCaseId(currentMatch.id);
-                activeCaseIdRef.current = currentMatch.id;
-              }
-              if (!isDirtyRef.current && !isSavingRef.current) {
-                setDraftCase(currentMatch);
-                latestDraftRef.current = currentMatch;
-              }
-            }
-          },
-          (err) => {
-            if (cancelled) return;
-            setLoadError(err.message || 'Kon dossiers niet laden.');
-            setLoadingData(false);
-          }
+    const loadingTimeoutId = window.setTimeout(() => {
+      if (!cancelled && !settled) {
+        setLoadingData(false);
+        setLoadError(
+          'Het laden van gegevens duurde te lang. Controleer je verbinding en klik op Opnieuw laden.'
         );
+      }
+    }, 15000);
 
-        if (authUser.role === 'admin') {
-          unsubMaps = subscribeMapTemplates(
-            (maps) => {
-              if (!cancelled) setMapTemplates(maps);
-            },
-            (err) => {
-              if (!cancelled) {
-                setLoadError((prev) => prev ?? err.message);
-              }
-            }
-          );
-
-          unsubCommunities = subscribeCommunities(
-            (comms) => {
-              if (!cancelled) setCommunities(comms);
-            },
-            (err) => {
-              if (!cancelled) {
-                setLoadError((prev) => prev ?? err.message);
-              }
-            }
-          );
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setLoadError(
-            err instanceof Error ? err.message : 'Verbinding met Firestore mislukt.'
-          );
-          setLoadingData(false);
-        }
+    const markSettled = () => {
+      settled = true;
+      window.clearTimeout(loadingTimeoutId);
+      if (!cancelled) {
+        setLoadingData(false);
       }
     };
 
-    void startSubscriptions();
+    // Start live listeners immediately so the UI never blocks on starter seeding or local migration
+    unsubCases = subscribeCases(
+      authUser,
+      (list) => {
+        if (cancelled) return;
+        setCases(list);
+        markSettled();
+
+        const preferredId =
+          activeCaseIdRef.current ||
+          readStoredSetting('teiscomysterics_active_case') ||
+          '';
+        const currentMatch = list.find((c) => c.id === preferredId);
+        if (!currentMatch) {
+          const first = list[0] ?? null;
+          draftVersionRef.current += 1;
+          setActiveCaseId(first?.id ?? '');
+          if (first?.id) {
+            writeStoredSetting('teiscomysterics_active_case', first.id);
+          }
+          setDraftCase(first);
+          latestDraftRef.current = first;
+          setIsDirty(false);
+          isDirtyRef.current = false;
+        } else {
+          if (activeCaseIdRef.current !== currentMatch.id) {
+            setActiveCaseId(currentMatch.id);
+            activeCaseIdRef.current = currentMatch.id;
+          }
+          if (!isDirtyRef.current && !isSavingRef.current) {
+            setDraftCase(currentMatch);
+            latestDraftRef.current = currentMatch;
+          }
+        }
+      },
+      (err) => {
+        if (cancelled) return;
+        setLoadError(formatErrorMessage(err, 'Kon dossiers niet laden.'));
+        markSettled();
+      }
+    );
+
+    if (authUserRole === 'admin') {
+      unsubMaps = subscribeMapTemplates(
+        (maps) => {
+          if (!cancelled) setMapTemplates(maps);
+        },
+        (err) => {
+          if (!cancelled) {
+            setLoadError((prev) => prev ?? formatErrorMessage(err, 'Kon kaarten niet laden.'));
+          }
+        }
+      );
+
+      unsubCommunities = subscribeCommunities(
+        (comms) => {
+          if (!cancelled) setCommunities(comms);
+        },
+        (err) => {
+          if (!cancelled) {
+            setLoadError((prev) => prev ?? formatErrorMessage(err, 'Kon communities niet laden.'));
+          }
+        }
+      );
+
+      void ensureStarterSeedData(authUserId).catch((err) => {
+        if (!cancelled) {
+          setLoadError((prev) =>
+            prev ?? formatErrorMessage(err, 'Startgegevens laden mislukt.')
+          );
+          markSettled();
+        }
+      });
+    }
+
+    void migrateLegacyStaticDbToFirestore(authUser).catch(() => undefined);
 
     return () => {
       cancelled = true;
+      window.clearTimeout(loadingTimeoutId);
       unsubCases?.();
       unsubMaps?.();
       unsubCommunities?.();
     };
-  }, [authReady, authUser, reloadNonce]);
+  }, [authReady, authUserId, authUserRole, reloadNonce]);
 
   const handleLogout = async () => {
     try {
@@ -942,7 +1006,27 @@ export default function App() {
       <main className="no-print flex-1 w-full max-w-[1440px] mx-auto px-4 sm:px-6 py-6">
         {loadingData ? (
           <div className="space-y-4">
-            <div className="h-16 rounded-xl bg-slate-200 dark:bg-slate-800/50 animate-pulse" />
+            <div className="p-6 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0F151D] flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <RefreshCw className="w-4 h-4 text-emerald-500 animate-spin" />
+                <div>
+                  <p className="text-sm font-semibold text-slate-900 dark:text-white">
+                    Dossiers en kaarten worden geladen...
+                  </p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Verbinding maken met Cloud Firestore.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReloadNonce((n) => n + 1)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Opnieuw proberen</span>
+              </button>
+            </div>
             <div className="h-72 rounded-xl bg-slate-200 dark:bg-slate-800/50 animate-pulse" />
           </div>
         ) : loadError ? (

@@ -56,6 +56,12 @@ function mapFirebaseAuthError(err: unknown): string {
   if (msg.includes('popup-closed-by-user')) {
     return 'Het Google-aanmeldscherm is gesloten voordat het inloggen was voltooid.';
   }
+  if (msg.includes('popup-blocked')) {
+    return 'De pop-up voor Google-inloggen is geblokkeerd door je browser. Sta pop-ups toe of log in met e-mail/gebruikersnaam.';
+  }
+  if (msg.includes('auth/network-request-failed')) {
+    return 'Netwerkfout tijdens het aanmelden. Controleer je internetverbinding en probeer het opnieuw.';
+  }
   if (msg.includes('unauthorized-domain')) {
     return 'Dit domein is nog niet toegevoegd onder Geautoriseerde domeinen in Firebase Authentication.';
   }

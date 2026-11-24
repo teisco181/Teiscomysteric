@@ -50,6 +50,29 @@ import {
 } from './utils/starterData.ts';
 
 const BOOTSTRAP_ADMIN_EMAIL = 'teisco181@gmail.com';
+const FIRESTORE_OP_TIMEOUT_MS = 12000;
+
+function withTimeout<T>(promise: Promise<T>, label: string, ms = FIRESTORE_OP_TIMEOUT_MS): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = globalThis.setTimeout(() => {
+      reject(
+        new Error(
+          `Verbinding met de database duurde te lang (${label}). Controleer je internetverbinding en probeer opnieuw.`
+        )
+      );
+    }, ms);
+    promise.then(
+      (val) => {
+        globalThis.clearTimeout(timer);
+        resolve(val);
+      },
+      (err) => {
+        globalThis.clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
 
 function toIso(val: unknown): string {
   if (val instanceof Timestamp) {
@@ -426,7 +449,11 @@ export async function ensureUserProfile(fbUser: FirebaseUser): Promise<AuthUser>
 
   let hasAdminMarker = false;
   try {
-    const adminSnap = await getDoc(doc(db, 'admins', uid));
+    const adminSnap = await withTimeout(
+      getDoc(doc(db, 'admins', uid)),
+      'beheerderscontrole',
+      6000
+    );
     hasAdminMarker = adminSnap.exists();
   } catch {
     hasAdminMarker = false;
@@ -437,10 +464,13 @@ export async function ensureUserProfile(fbUser: FirebaseUser): Promise<AuthUser>
 
   if (isBootstrappedAdmin && !hasAdminMarker) {
     try {
-      await setDoc(doc(db, 'admins', uid), {
-        uid,
-        createdAt: serverTimestamp(),
-      });
+      await withTimeout(
+        setDoc(doc(db, 'admins', uid), {
+          uid,
+          createdAt: serverTimestamp(),
+        }),
+        'beheerdersprofiel opslaan'
+      );
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, `admins/${uid}`);
     }
@@ -449,7 +479,7 @@ export async function ensureUserProfile(fbUser: FirebaseUser): Promise<AuthUser>
   const userRef = doc(db, 'users', uid);
   let snap;
   try {
-    snap = await getDoc(userRef);
+    snap = await withTimeout(getDoc(userRef), 'gebruikersprofiel laden');
   } catch (err) {
     handleFirestoreError(err, OperationType.GET, `users/${uid}`);
   }
@@ -466,13 +496,16 @@ export async function ensureUserProfile(fbUser: FirebaseUser): Promise<AuthUser>
 
   if (!snap.exists()) {
     try {
-      await setDoc(userRef, {
-        uid,
-        displayName,
-        role: effectiveRole,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
+      await withTimeout(
+        setDoc(userRef, {
+          uid,
+          displayName,
+          role: effectiveRole,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        }),
+        'gebruikersprofiel aanmaken'
+      );
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, `users/${uid}`);
     }
@@ -490,15 +523,15 @@ export async function ensureUserProfile(fbUser: FirebaseUser): Promise<AuthUser>
 
   if (isBootstrappedAdmin && data.role !== 'admin') {
     try {
-      await setDoc(
-        userRef,
-        {
+      await withTimeout(
+        setDoc(userRef, {
           uid,
           displayName: String(data.displayName ?? displayName),
           role: 'admin',
           createdAt: data.createdAt ?? serverTimestamp(),
           updatedAt: serverTimestamp(),
-        }
+        }),
+        'beheerdersrol bijwerken'
       );
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `users/${uid}`);
@@ -515,11 +548,14 @@ export async function ensureUserProfile(fbUser: FirebaseUser): Promise<AuthUser>
 
 export async function ensureStarterSeedData(adminUid: string): Promise<void> {
   try {
-    const [casesSnap, mapsSnap, commsSnap] = await Promise.all([
-      getDocs(collection(db, 'cases')),
-      getDocs(collection(db, 'mapTemplates')),
-      getDocs(collection(db, 'communities')),
-    ]);
+    const [casesSnap, mapsSnap, commsSnap] = await withTimeout(
+      Promise.all([
+        getDocs(collection(db, 'cases')),
+        getDocs(collection(db, 'mapTemplates')),
+        getDocs(collection(db, 'communities')),
+      ]),
+      'startgegevens ophalen'
+    );
 
     if (!casesSnap.empty && !mapsSnap.empty && !commsSnap.empty) return;
 
