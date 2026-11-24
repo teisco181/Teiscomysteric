@@ -24,6 +24,7 @@ import {
   Upload,
   UserPlus,
   Users,
+  X,
 } from 'lucide-react';
 import type { BackupBundle } from '../firebaseStore.ts';
 import {
@@ -46,6 +47,7 @@ import {
   generateFingerprintPreset,
 } from '../utils/fingerprint.ts';
 import { resolveAssetUrl } from '../utils/assetUrl.ts';
+import { parsePersonImportText } from '../utils/personImport.ts';
 import { FingerprintGrid } from './FingerprintGrid.tsx';
 import { PersonAvatar } from './PersonAvatar.tsx';
 import { TownMapView } from './TownMapView.tsx';
@@ -175,6 +177,12 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
   const [fpGroupMode, setFpGroupMode] = useState<'all' | 'suspects' | 'evidence'>('all');
   const [fpPatternFilter, setFpPatternFilter] = useState<'all' | FingerprintPattern>('all');
   const [selectedFpEvidenceStampId, setSelectedFpEvidenceStampId] = useState<string | null>(null);
+
+  // Person batch import modal state
+  const [showImportPersonsModal, setShowImportPersonsModal] = useState(false);
+  const [importPersonsText, setImportPersonsText] = useState('');
+  const [replaceExistingOnImport, setReplaceExistingOnImport] = useState(false);
+  const [personImportMessage, setPersonImportMessage] = useState<string | null>(null);
 
   const selectedCommunity = useMemo(
     () =>
@@ -351,7 +359,7 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
       occupation: 'Inwoner',
       address: activeCase.locations[0]?.address ?? 'Dorpsstraat 1',
       locationId: activeCase.locations[0]?.id ?? '',
-      portraitUrl: PRESET_PORTRAITS[(idx - 1) % PRESET_PORTRAITS.length].url,
+      portraitUrl: '',
       status: 'burger',
       alibi: '',
       publicBio: '',
@@ -376,6 +384,71 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
       persons: remaining,
     });
     setSelectedPersonId(remaining[0]?.id ?? '');
+  };
+
+  const parsedImportRows = useMemo(
+    () => parsePersonImportText(importPersonsText, activeCase.locations ?? []),
+    [importPersonsText, activeCase.locations]
+  );
+
+  const handleImportPersons = () => {
+    if (parsedImportRows.length === 0) return;
+
+    const existingPersons = replaceExistingOnImport ? [] : (activeCase.persons ?? []);
+    const startIdx = existingPersons.length + 1;
+    const patterns: FingerprintPattern[] = ['Lus', 'Kring', 'Samengesteld', 'Boog'];
+    const batchTs = Date.now().toString(36);
+
+    const importedPersons: Person[] = parsedImportRows.map((row, i) => {
+      const idx = startIdx + i;
+      const pattern = patterns[(idx - 1) % patterns.length];
+      return {
+        id: `per-${batchTs}-${i}`,
+        code: `PRS-${String(idx).padStart(2, '0')}`,
+        name: row.name,
+        alias: row.alias,
+        age: row.age,
+        occupation: 'Inwoner',
+        address: row.matchedLocation
+          ? row.matchedLocation.address || row.matchedLocation.name
+          : row.normalizedLocationCode || activeCase.locations?.[0]?.address || 'Dorpsstraat 1',
+        locationId: row.matchedLocation?.id ?? '',
+        portraitUrl: '',
+        status: 'burger',
+        alibi: '',
+        publicBio: row.publicBio,
+        policeNotes: row.policeNotes,
+        fingerprintCode: `FP-IMP-${String(idx).padStart(2, '0')}`,
+        fingerprintPattern: pattern,
+        fingerprint: generateFingerprintPreset(pattern, idx * 11),
+        isCulprit: false,
+        creatorSecretNote: '',
+      };
+    });
+
+    const matchedCount = parsedImportRows.filter((r) => r.matchedLocation !== null).length;
+    const unmatchedCodes = Array.from(
+      new Set(
+        parsedImportRows
+          .filter((r) => r.normalizedLocationCode && !r.matchedLocation)
+          .map((r) => r.normalizedLocationCode)
+      )
+    );
+
+    onUpdateDraft({
+      ...activeCase,
+      persons: [...existingPersons, ...importedPersons],
+    });
+    setSelectedPersonId(importedPersons[0].id);
+    setShowImportPersonsModal(false);
+    setImportPersonsText('');
+    setReplaceExistingOnImport(false);
+    setPersonImportMessage(
+      unmatchedCodes.length > 0
+        ? `${importedPersons.length} persoon/personen geïmporteerd (${matchedCount} gekoppeld op kaart; nog niet op kaart gevonden: ${unmatchedCodes.join(', ')}).`
+        : `${importedPersons.length} persoon/personen geïmporteerd en gekoppeld aan de kaart.`
+    );
+    setTimeout(() => setPersonImportMessage(null), 6000);
   };
 
   const updateEvidence = (evidenceId: string, patch: Partial<EvidenceItem>) => {
@@ -1237,19 +1310,35 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
       {activeTab === 'personen' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           <div className="lg:col-span-4 p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0F151D] space-y-3">
-            <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-200 dark:border-slate-800">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-200 dark:border-slate-800">
               <h2 className="text-sm font-bold text-slate-900 dark:text-white">
                 Personen ({activeCase.persons.length})
               </h2>
-              <button
-                type="button"
-                onClick={addPerson}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition-colors"
-              >
-                <UserPlus className="w-3.5 h-3.5" />
-                <span>Toevoegen</span>
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setShowImportPersonsModal(true)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 transition-colors"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Importeren</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={addPerson}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition-colors"
+                >
+                  <UserPlus className="w-3.5 h-3.5" />
+                  <span>Toevoegen</span>
+                </button>
+              </div>
             </div>
+
+            {personImportMessage && (
+              <div className="p-2.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-[11px] text-emerald-700 dark:text-emerald-300 leading-relaxed">
+                {personImportMessage}
+              </div>
+            )}
 
             {activeCase.persons.length === 0 ? (
               <p className="text-xs text-slate-500 py-8 text-center">
@@ -1470,7 +1559,7 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
                         }
                         className="flex-1 px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-[#090D12]"
                       >
-                        <option value="">Initialen / Eigen foto</option>
+                        <option value="">Geen afbeelding (initialen)</option>
                         {PRESET_PORTRAITS.map((p) => (
                           <option key={p.url} value={p.url}>
                             {p.label}
@@ -2444,6 +2533,208 @@ export const MakerStudio: React.FC<MakerStudioProps> = ({
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {showImportPersonsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 overflow-y-auto">
+          <div className="w-full max-w-4xl rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0F151D] p-6 space-y-5 shadow-2xl my-auto">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  Personen importeren (Tab-gescheiden)
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  Plak regels vanuit Excel, Google Sheets of een tekstbestand. Gebruik{' '}
+                  <code className="font-mono text-emerald-600 dark:text-emerald-400">Tab</code>{' '}
+                  tussen kolommen en{' '}
+                  <code className="font-mono text-emerald-600 dark:text-emerald-400">Enter</code>{' '}
+                  voor elke nieuwe persoon.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowImportPersonsModal(false)}
+                aria-label="Sluit importvenster"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-3.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#090D12] text-xs space-y-1.5">
+              <div className="font-semibold text-slate-800 dark:text-slate-200">
+                Volgorde per regel:
+              </div>
+              <div className="font-mono text-[11px] text-emerald-700 dark:text-emerald-300 break-words">
+                Volledige naam [Tab] Bijnaam (mag leeg blijven) [Tab] Leeftijd [Tab] Kaartlocatiecode (bijv. H-1, H-2, H-15) [Tab] Openbare achtergrond [Tab] Politie-aantekeningen
+              </div>
+              <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                Huis-codes: <code className="font-mono">H-1</code>, <code className="font-mono">H-2</code>, enz. (ook los nummer zoals <code className="font-mono">12</code> wordt automatisch herkend als <code className="font-mono">H-12</code>). Beschikbare codes op deze kaart:{' '}
+                {(activeCase.locations ?? []).length > 0
+                  ? (activeCase.locations ?? []).map((l) => l.code).join(', ')
+                  : 'nog geen locaties op kaart'}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label
+                  htmlFor="person-import-textarea"
+                  className="text-xs font-medium text-slate-700 dark:text-slate-300"
+                >
+                  Importgegevens ({parsedImportRows.length} herkend)
+                </label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setImportPersonsText(
+                        [
+                          'Jan de Vries\t\t42\tH-1\tBakker op de hoek van het plein.\tGezien rond 22:00 bij de haven.',
+                          'Sanne Bakker\tDe Vos\t29\tH-2\tBuurvrouw naast de bakkerij.\tHoorde voetstappen in de steeg.',
+                        ].join('\n')
+                      )
+                    }
+                    className="px-2.5 py-1 text-[11px] font-medium rounded-md border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+                  >
+                    Voorbeeld invullen
+                  </button>
+                  <label className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium rounded-md border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">
+                    <Upload className="w-3 h-3" />
+                    <span>Bestand laden (.txt / .tsv)</span>
+                    <input
+                      type="file"
+                      accept=".txt,.tsv,text/plain,text/tab-separated-values"
+                      className="sr-only"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        e.target.value = '';
+                        if (!file) return;
+                        const text = await file.text();
+                        setImportPersonsText(text);
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <textarea
+                id="person-import-textarea"
+                rows={7}
+                value={importPersonsText}
+                onChange={(e) => setImportPersonsText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Tab') {
+                    e.preventDefault();
+                    const el = e.currentTarget;
+                    const start = el.selectionStart;
+                    const end = el.selectionEnd;
+                    const nextVal =
+                      importPersonsText.slice(0, start) +
+                      '\t' +
+                      importPersonsText.slice(end);
+                    setImportPersonsText(nextVal);
+                    requestAnimationFrame(() => {
+                      el.selectionStart = el.selectionEnd = start + 1;
+                    });
+                  }
+                }}
+                placeholder={'Jan de Vries\t\t42\tH-1\tOpenbare achtergrond voor spelers\tPolitie-aantekeningen voor spelers'}
+                className="w-full px-3 py-2.5 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-[#090D12] text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+
+            {parsedImportRows.length > 0 && (
+              <div className="space-y-2">
+                <div className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Voorbeeld van te importeren personen ({parsedImportRows.length})
+                </div>
+                <div className="max-h-52 overflow-auto rounded-lg border border-slate-200 dark:border-slate-800">
+                  <table className="w-full text-left text-[11px] border-collapse">
+                    <thead className="bg-slate-100 dark:bg-[#090D12] text-slate-600 dark:text-slate-400 sticky top-0">
+                      <tr>
+                        <th className="px-2.5 py-2 font-semibold">Naam</th>
+                        <th className="px-2.5 py-2 font-semibold">Bijnaam</th>
+                        <th className="px-2.5 py-2 font-semibold">Leeftijd</th>
+                        <th className="px-2.5 py-2 font-semibold">Kaartlocatie</th>
+                        <th className="px-2.5 py-2 font-semibold">Achtergrond</th>
+                        <th className="px-2.5 py-2 font-semibold">Politie-aantekeningen</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                      {parsedImportRows.map((row) => (
+                        <tr key={`${row.lineNumber}-${row.name}`}>
+                          <td className="px-2.5 py-2 font-medium text-slate-900 dark:text-white whitespace-nowrap">
+                            {row.name}
+                          </td>
+                          <td className="px-2.5 py-2 text-slate-500 dark:text-slate-400">
+                            {row.alias || '—'}
+                          </td>
+                          <td className="px-2.5 py-2 font-mono text-slate-700 dark:text-slate-300">
+                            {row.age}
+                          </td>
+                          <td className="px-2.5 py-2 whitespace-nowrap">
+                            {row.matchedLocation ? (
+                              <span className="font-mono text-emerald-600 dark:text-emerald-400">
+                                {row.matchedLocation.code} — {row.matchedLocation.name}
+                              </span>
+                            ) : row.normalizedLocationCode ? (
+                              <span className="font-mono text-amber-600 dark:text-amber-400">
+                                {row.normalizedLocationCode} (nog niet op kaart)
+                              </span>
+                            ) : (
+                              <span className="text-slate-400">—</span>
+                            )}
+                          </td>
+                          <td className="px-2.5 py-2 text-slate-600 dark:text-slate-300 max-w-[180px] truncate">
+                            {row.publicBio || '—'}
+                          </td>
+                          <td className="px-2.5 py-2 text-slate-600 dark:text-slate-300 max-w-[180px] truncate">
+                            {row.policeNotes || '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-200 dark:border-slate-800">
+              <label className="inline-flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={replaceExistingOnImport}
+                  onChange={(e) => setReplaceExistingOnImport(e.target.checked)}
+                  className="rounded border-slate-400 text-emerald-600 focus:ring-emerald-500"
+                />
+                <span>Bestaande personen in dit dossier vervangen</span>
+              </label>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowImportPersonsModal(false)}
+                  className="px-3.5 py-2 text-xs font-medium rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  Annuleren
+                </button>
+                <button
+                  type="button"
+                  disabled={parsedImportRows.length === 0}
+                  onClick={handleImportPersons}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white transition-colors"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>
+                    {parsedImportRows.length}{' '}
+                    {parsedImportRows.length === 1 ? 'persoon' : 'personen'} importeren
+                  </span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
